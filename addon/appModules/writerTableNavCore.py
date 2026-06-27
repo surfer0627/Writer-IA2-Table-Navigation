@@ -2010,13 +2010,8 @@ def _getWriterIA2ObjectTextForSpeech(obj: object | None) -> str:
 
 	return ""
 
-def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
-	"""Return speech text for a Writer IA2 table move result.
-
-	Only user-visible cell text fields should be used as content.
-	Object descriptions such as targetDescription, afterDescription, or cellName
-	may contain accessibility coordinates such as A4, not the actual cell text.
-	"""
+def _getWriterIA2TableContentSpeechText(result: dict[str, object]) -> str:
+	"""Return real Writer table cell content text from a move result."""
 	for key in (
 		"targetContentText",
 		"contentText",
@@ -2027,8 +2022,14 @@ def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
 		if isinstance(value, str) and value.strip():
 			return value.strip()
 
+	return ""
+
+
+def _getWriterIA2TableCellCoordsSpeechText(result: dict[str, object]) -> str:
+	"""Return Writer table cell coordinates from a move result."""
 	targetRow = result.get("targetRow")
 	targetColumn = result.get("targetColumn")
+
 	if isinstance(targetRow, int) and isinstance(targetColumn, int):
 		# Translators: fallback speech for a Writer table cell location.
 		return _("row {row}, column {column}").format(
@@ -2036,8 +2037,31 @@ def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
 			column=targetColumn + 1,
 		)
 
+	return ""
+
+
+def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
+	"""Return speech text for a Writer IA2 table move result.
+
+	Use real cell content when available, and add table coordinates when they
+	are available. Do not use object description, name, or cellName as content.
+	"""
+	contentText = _getWriterIA2TableContentSpeechText(result)
+	coordinateText = _getWriterIA2TableCellCoordsSpeechText(result)
+
+	if contentText and coordinateText:
+		return f"{contentText}, {coordinateText}"
+
+	if contentText:
+		return contentText
+
+	if coordinateText:
+		return coordinateText
+
 	# Translators: fallback speech when a Writer table cell has no text or coordinates.
 	return _("table cell")
+
+
 
 def moveAndReportWriterIA2TableCell(
 	direction: str,
