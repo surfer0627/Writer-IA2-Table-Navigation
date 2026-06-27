@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import api
+import ui
 import controlTypes
 
 
@@ -1901,3 +1902,186 @@ class WriterIA2TableNavigator:
 			f"{prefix}apiFocusRowIndex={result.get('apiFocusRowIndex')!r}",
 			f"{prefix}apiFocusColumnIndex={result.get('apiFocusColumnIndex')!r}",
 		]
+
+
+
+
+def _normalizeWriterIA2SpeechText(text: object) -> str:
+	"""Normalize real Writer cell text for speech.
+
+	Return an empty string if the value is not real user-visible text.
+	"""
+	if not isinstance(text, str):
+		return ""
+
+	text = text.replace("\x00", "")
+	text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+	lines = []
+	for line in text.split("\n"):
+		line = line.strip()
+		if line:
+			lines.append(line)
+
+	return " ".join(lines).strip()
+
+
+def _getWriterIA2SingleObjectTextForSpeech(obj: object | None) -> str:
+	"""Get real text from one NVDA object.
+
+	Do not use name or description here. In LibreOffice Writer table cells,
+	description may contain accessibility coordinates such as A4, not the real
+	cell content.
+	"""
+	if obj is None:
+		return ""
+
+	try:
+		import textInfos
+	except Exception:
+		return ""
+
+	try:
+		info = obj.makeTextInfo(textInfos.POSITION_ALL)
+	except Exception:
+		return ""
+
+	try:
+		text = info.text
+	except Exception:
+		return ""
+
+	return _normalizeWriterIA2SpeechText(text)
+
+
+def _getWriterIA2ObjectTextForSpeech(obj: object | None) -> str:
+	"""Get real user-visible text from a Writer table object.
+
+	The target object may be a table cell object. The actual content is often on
+	a child paragraph or text object. If no real text is found, return an empty
+	string. Do not return fallback speech such as blank, table cell, row/column,
+	name, or description.
+	"""
+	if obj is None:
+		return ""
+
+	text = _getWriterIA2SingleObjectTextForSpeech(obj)
+	if text:
+		return text
+
+	try:
+		directChildren = list(getattr(obj, "children", None) or [])
+	except Exception:
+		directChildren = []
+
+	for child in directChildren:
+		text = _getWriterIA2SingleObjectTextForSpeech(child)
+		if text:
+			return text
+
+	maxNodes = 60
+	visitedCount = 0
+	seen: set[int] = set()
+	pending: list[object] = list(directChildren)
+
+	while pending and visitedCount < maxNodes:
+		current = pending.pop(0)
+		if current is None:
+			continue
+
+		currentIdentity = id(current)
+		if currentIdentity in seen:
+			continue
+
+		seen.add(currentIdentity)
+		visitedCount += 1
+
+		text = _getWriterIA2SingleObjectTextForSpeech(current)
+		if text:
+			return text
+
+		try:
+			children = list(getattr(current, "children", None) or [])
+		except Exception:
+			children = []
+
+		if children:
+			pending.extend(children)
+
+	return ""
+
+def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
+	"""Return speech text for a Writer IA2 table move result.
+
+	Only user-visible cell text fields should be used as content.
+	Object descriptions such as targetDescription, afterDescription, or cellName
+	may contain accessibility coordinates such as A4, not the actual cell text.
+	"""
+	for key in (
+		"targetContentText",
+		"contentText",
+		"afterText",
+		"targetText",
+	):
+		value = result.get(key)
+		if isinstance(value, str) and value.strip():
+			return value.strip()
+
+	targetRow = result.get("targetRow")
+	targetColumn = result.get("targetColumn")
+	if isinstance(targetRow, int) and isinstance(targetColumn, int):
+		# Translators: fallback speech for a Writer table cell location.
+		return _("row {row}, column {column}").format(
+			row=targetRow + 1,
+			column=targetColumn + 1,
+		)
+
+	# Translators: fallback speech when a Writer table cell has no text or coordinates.
+	return _("table cell")
+
+def moveAndReportWriterIA2TableCell(
+	direction: str,
+	focusObj: object | None = None,
+) -> bool:
+	"""Move in a Writer IA2 table and report the target cell."""
+	import api
+	import ui
+
+	focus = focusObj or api.getFocusObject()
+
+	try:
+		result = WriterIA2TableNavigator().move(focus, direction)
+	except Exception:
+		return False
+
+	if result.get("moved"):
+		targetObj = result.get("targetNVDAObject")
+		contentText = _getWriterIA2ObjectTextForSpeech(targetObj)
+
+		if not contentText:
+			contentText = _getWriterIA2ObjectTextForSpeech(api.getFocusObject())
+
+		if contentText:
+			result["targetContentText"] = contentText
+			result["contentText"] = contentText
+
+		speechText = _getWriterIA2TableMoveSpeech(result)
+		if speechText:
+			ui.message(speechText)
+		return True
+
+
+	if result.get("edge"):
+		# Translators: Reported when table navigation reaches the edge of a table.
+		ui.message(_("Edge of table"))
+		return True
+
+	if result.get("inTable") is False:
+		# Translators: Reported when table navigation is requested outside a table cell.
+		ui.message(_("Not in a table cell"))
+		return True
+
+	# Translators: Reported when Writer table navigation failed.
+	ui.message(_("Cannot move table cell"))
+	return True
+

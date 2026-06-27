@@ -91,6 +91,3 @@ scons
 
 The generated `.nvda-addon` file can then be installed in NVDA for testing.
 
-## License
-
-This project is licensed under the GNU General Public License v2.0 or later.
