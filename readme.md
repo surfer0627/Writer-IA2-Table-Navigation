@@ -12,7 +12,7 @@ This is not an official NVDA build and not a final fix.
 When the cursor is inside a LibreOffice Writer table, the add-on provides these commands:
 
 | Command | Action |
-| --* | --* |
+| --- | --- |
 | control+alt+leftArrow | Move to the previous table cell in the row |
 | control+alt+rightArrow | Move to the next table cell in the row |
 | control+alt+upArrow | Move to the previous table cell in the column |
