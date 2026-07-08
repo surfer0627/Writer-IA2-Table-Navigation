@@ -1198,16 +1198,29 @@ class WriterIA2TableNavigator:
 
 		return False, None, directFailReason or "targetObjectNotFound"
 
-
-
-
 	def getContextFromObject(self, obj: object | None) -> dict[str, object]:
-		"""Return the IA2 table navigation context for an object."""
+		"""Return the IA2 table raw context for an object.
+
+		This method is the raw IA2 context provider. It should collect source
+		objects, IA2 row/column/span data, table size, and table-object identity
+		materials. It must not create NVDA-style rowNumber/columnNumber values,
+		TextInfo ControlFields, speech text, or braille text.
+		"""
 		context: dict[str, object] = {
 			"inTable": False,
 			"cellObj": None,
 			"iaTableCell": None,
 			"table2Obj": None,
+			"tableObj": None,
+			"tableObjClass": "",
+			"tableObjModule": "",
+			"tableObjRole": None,
+			"tableObjName": None,
+			"tableObjDescription": None,
+			"tableObjIA2UniqueID": None,
+			"tableObjWindowHandle": None,
+			"tableObjProcessID": None,
+			"tableObjChildCount": None,
 			"rowIndex": None,
 			"columnIndex": None,
 			"rowSpan": None,
@@ -1218,17 +1231,36 @@ class WriterIA2TableNavigator:
 			"failReason": "",
 		}
 
+
 		cellObj = self.getNearestTableCellFromObject(obj)
 		if cellObj is None:
 			context["failStage"] = "findNearestTableCell"
 			context["failReason"] = "nearestTableCellNotFound"
 			return context
 
+		context["cellObj"] = cellObj
+
+		tableObj = None
+		try:
+			tableObj = self._findAncestorTableObject(cellObj)
+		except Exception:
+			tableObj = None
+
+		if tableObj is None:
+			try:
+				tableObj = getattr(cellObj, "parent", None)
+			except Exception:
+				tableObj = None
+
+		context.update(self._getTableObjectIdentityRawFields(tableObj))
+
 		iaTableCell = self.getIATableCellFromObject(cellObj)
 		if iaTableCell is None:
 			context["failStage"] = "getIATableCell"
 			context["failReason"] = "iaTableCellNotFound"
 			return context
+
+		context["iaTableCell"] = iaTableCell
 
 		coordsOk, rowIndex, columnIndex, coordsFailReason = self.getCellCoordinates(iaTableCell)
 		if not coordsOk:
@@ -1242,21 +1274,13 @@ class WriterIA2TableNavigator:
 			context["failReason"] = extentsFailReason
 			return context
 
-		try:
-			rowSpan = max(int(iaTableCell.rowExtent), 1)
-		except Exception:
-			rowSpan = 1
-
-		try:
-			columnSpan = max(int(iaTableCell.columnExtent), 1)
-		except Exception:
-			columnSpan = 1
-
 		table2Ok, table2Obj, table2FailReason = self.getIA2TableFromCell(iaTableCell)
 		if not table2Ok:
 			context["failStage"] = "getIA2TableFromCell"
 			context["failReason"] = table2FailReason
 			return context
+
+		context["table2Obj"] = table2Obj
 
 		sizeOk, nRows, nColumns, sizeFailReason = self.getTableSize(table2Obj)
 		if not sizeOk:
@@ -1265,9 +1289,6 @@ class WriterIA2TableNavigator:
 			return context
 
 		context["inTable"] = True
-		context["cellObj"] = cellObj
-		context["iaTableCell"] = iaTableCell
-		context["table2Obj"] = table2Obj
 		context["rowIndex"] = rowIndex
 		context["columnIndex"] = columnIndex
 		context["rowSpan"] = rowSpan
@@ -1282,24 +1303,36 @@ class WriterIA2TableNavigator:
 		includeTableCellCoords: bool = True,
 		source: str = "IAccessibleTableCell",
 	) -> dict[str, object]:
-		"""Return NVDA-style table-cell properties derived from Writer IA2.
+		"""Return normalized Writer IA2 table-cell information.
 
-		Writer currently exposes table structure through IA2, while the focused
-		Symphony text object exposes the text/caret side. These are not yet
-		combined into native NVDA TextInfo/control-field properties for Writer.
+		This is the only place that converts IA2 raw context into NVDA-style
+		table-cell data.
 
-		This adapter is an interim bridge. It converts IA2 0-based row/column
-		indexes and row/column extents into the property shape used by NVDA
-		speech/braille formatting: rowNumber, columnNumber, rowSpan,
-		columnSpan and includeTableCellCoords.
+		Responsibilities:
+		- Keep IA2 rowIndex / columnIndex as 0-based raw data.
+		- Convert rowIndex / columnIndex into 1-based rowNumber / columnNumber.
+		- Normalize rowSpan / columnSpan.
+		- Compute rowEndNumber / columnEndNumber.
+		- Build a stable tableID from raw table-object identity materials.
 
-		This helper should not present anything to the user directly. Speech and
-		braille code should consume the returned properties.
+		This helper must not create TextInfo ControlFields and must not present
+		anything to the user directly. TextInfo, speech, and braille code should
+		consume the returned cellInfo.
 		"""
 		if not context or not context.get("inTable"):
 			return {
 				"inTable": False,
 				"source": source,
+				"failReason": (
+					context.get("failReason", "notInTable")
+					if isinstance(context, dict)
+					else "contextMissing"
+				),
+				"failStage": (
+					context.get("failStage", "")
+					if isinstance(context, dict)
+					else ""
+				),
 			}
 
 		rowIndex = context.get("rowIndex")
@@ -1330,12 +1363,66 @@ class WriterIA2TableNavigator:
 
 		rowNumber = rowIndex + 1
 		columnNumber = columnIndex + 1
+		rowEndNumber = rowNumber + rowSpan - 1
+		columnEndNumber = columnNumber + columnSpan - 1
+
+		tableObjProcessID = context.get("tableObjProcessID")
+		tableObjWindowHandle = context.get("tableObjWindowHandle")
+		tableObjIA2UniqueID = context.get("tableObjIA2UniqueID")
+
+		tableID = ""
+		tableIDSource = ""
+		tableIDFailReason = ""
+
+		if (
+			tableObjProcessID is not None
+			and tableObjWindowHandle is not None
+			and tableObjIA2UniqueID is not None
+		):
+			tableID = "writer-ia2-table:%s:%s:%s" % (
+				tableObjProcessID,
+				tableObjWindowHandle,
+				tableObjIA2UniqueID,
+			)
+			tableIDSource = "processID+windowHandle+tableIA2UniqueID"
+		elif tableObjProcessID is not None and tableObjIA2UniqueID is not None:
+			tableID = "writer-ia2-table:%s:%s" % (
+				tableObjProcessID,
+				tableObjIA2UniqueID,
+			)
+			tableIDSource = "processID+tableIA2UniqueID"
+		elif tableObjWindowHandle is not None and tableObjIA2UniqueID is not None:
+			tableID = "writer-ia2-table:%s:%s" % (
+				tableObjWindowHandle,
+				tableObjIA2UniqueID,
+			)
+			tableIDSource = "windowHandle+tableIA2UniqueID"
+		else:
+			tableIDFailReason = "identityFieldsMissing"
 
 		return {
 			"inTable": True,
 			"source": source,
 
+			# Table identity.
+			"tableID": tableID,
+			"tableIDSource": tableIDSource,
+			"tableIDFailReason": tableIDFailReason,
+			"tableObj": context.get("tableObj"),
+			"tableObjClass": context.get("tableObjClass", ""),
+			"tableObjModule": context.get("tableObjModule", ""),
+			"tableObjRole": context.get("tableObjRole"),
+			"tableObjName": context.get("tableObjName"),
+			"tableObjDescription": context.get("tableObjDescription"),
+			"tableObjIA2UniqueID": tableObjIA2UniqueID,
+			"tableObjWindowHandle": tableObjWindowHandle,
+			"tableObjProcessID": tableObjProcessID,
+			"tableObjChildCount": context.get("tableObjChildCount"),
+
 			# IA2 raw / 0-based data.
+			"cellObj": context.get("cellObj"),
+			"iaTableCell": context.get("iaTableCell"),
+			"table2Obj": context.get("table2Obj"),
 			"rowIndex": rowIndex,
 			"columnIndex": columnIndex,
 			"rowSpan": rowSpan,
@@ -1346,8 +1433,8 @@ class WriterIA2TableNavigator:
 			# NVDA-style / user-facing 1-based properties.
 			"rowNumber": rowNumber,
 			"columnNumber": columnNumber,
-			"rowEndNumber": rowNumber + rowSpan - 1,
-			"columnEndNumber": columnNumber + columnSpan - 1,
+			"rowEndNumber": rowEndNumber,
+			"columnEndNumber": columnEndNumber,
 			"includeTableCellCoords": includeTableCellCoords,
 		}
 
@@ -1366,6 +1453,93 @@ class WriterIA2TableNavigator:
 			"columnSpan": cellInfo.get("columnSpan", 1),
 			"includeTableCellCoords": cellInfo.get("includeTableCellCoords", True),
 		}
+
+	def getControlFieldProperties(
+		self,
+		cellInfo: dict[str, object],
+	) -> dict[str, object]:
+		"""Return TextInfo ControlField properties from normalized cellInfo.
+
+		This is a field adapter only. It must not query IA2, compute row/column
+		numbers from row/column indexes, or present anything to the user.
+		"""
+		result: dict[str, object] = {
+			"ok": False,
+			"failReason": "",
+			"tableID": "",
+			"tableField": None,
+			"cellField": None,
+		}
+
+		if not cellInfo or not cellInfo.get("inTable"):
+			result["failReason"] = (
+				cellInfo.get("failReason", "notInTable")
+				if isinstance(cellInfo, dict)
+				else "cellInfoMissing"
+			)
+			return result
+
+		tableID = cellInfo.get("tableID", "")
+		if not tableID:
+			result["failReason"] = cellInfo.get("tableIDFailReason") or "tableIDMissing"
+			return result
+
+		rowNumber = cellInfo.get("rowNumber")
+		columnNumber = cellInfo.get("columnNumber")
+		rowSpan = cellInfo.get("rowSpan")
+		columnSpan = cellInfo.get("columnSpan")
+		rowCount = cellInfo.get("nRows")
+		columnCount = cellInfo.get("nColumns")
+
+		if not isinstance(rowNumber, int) or not isinstance(columnNumber, int):
+			result["failReason"] = "rowOrColumnNumberMissing"
+			return result
+
+		if not isinstance(rowSpan, int) or not isinstance(columnSpan, int):
+			result["failReason"] = "rowOrColumnSpanMissing"
+			return result
+
+		try:
+			import controlTypes
+			import textInfos
+		except Exception as e:
+			result["failReason"] = "importFailed:%s" % e
+			return result
+
+		tableField = textInfos.ControlField()
+		tableField["role"] = controlTypes.Role.TABLE
+		tableField["table-id"] = tableID
+		tableField["_startOfNode"] = True
+
+		if isinstance(rowCount, int):
+			tableField["table-rowcount"] = rowCount
+
+		if isinstance(columnCount, int):
+			tableField["table-columncount"] = columnCount
+
+		cellField = textInfos.ControlField()
+		cellField["role"] = controlTypes.Role.TABLECELL
+		cellField["table-id"] = tableID
+		cellField["table-rownumber"] = rowNumber
+		cellField["table-columnnumber"] = columnNumber
+		cellField["table-rowsspanned"] = rowSpan
+		cellField["table-columnsspanned"] = columnSpan
+		cellField["_startOfNode"] = True
+
+		result.update({
+			"ok": True,
+			"failReason": "",
+			"tableID": tableID,
+			"tableField": tableField,
+			"cellField": cellField,
+			"rowNumber": rowNumber,
+			"columnNumber": columnNumber,
+			"rowSpan": rowSpan,
+			"columnSpan": columnSpan,
+			"rowCount": rowCount,
+			"columnCount": columnCount,
+		})
+		return result
 
 	def containsCoordinate(
 		self,
@@ -1660,6 +1834,313 @@ class WriterIA2TableNavigator:
 
 		return effectiveRowSpan, effectiveColumnSpan, details
 
+	def _findAncestorTableObject(self, obj: object | None) -> object | None:
+		"""Find the nearest ancestor table object for a Writer IA2 cell."""
+		if obj is None:
+			return None
+
+		try:
+			import controlTypes
+		except Exception:
+			return None
+
+		current = obj
+		for _ in range(10):
+			if current is None:
+				return None
+
+			try:
+				if getattr(current, "role", None) == controlTypes.Role.TABLE:
+					return current
+			except Exception:
+				pass
+
+			try:
+				current = getattr(current, "parent", None)
+			except Exception:
+				return None
+
+		return None
+
+	def _getTableObjectIdentityRawFields(
+		self,
+		tableObj: object | None,
+	) -> dict[str, object]:
+		"""Return raw table-object identity materials.
+
+		This helper does not build a formal table-id. It only collects raw
+		materials that a later normalized cellInfo layer can use to build a stable
+		table identity.
+		"""
+		fields: dict[str, object] = {
+			"tableObj": tableObj,
+			"tableObjClass": "",
+			"tableObjModule": "",
+			"tableObjRole": None,
+			"tableObjName": None,
+			"tableObjDescription": None,
+			"tableObjIA2UniqueID": None,
+			"tableObjWindowHandle": None,
+			"tableObjProcessID": None,
+			"tableObjChildCount": None,
+		}
+
+		if tableObj is None:
+			return fields
+
+		try:
+			fields["tableObjClass"] = tableObj.__class__.__name__
+		except Exception:
+			fields["tableObjClass"] = ""
+
+		try:
+			fields["tableObjModule"] = tableObj.__class__.__module__
+		except Exception:
+			fields["tableObjModule"] = ""
+
+		try:
+			fields["tableObjRole"] = getattr(tableObj, "role", None)
+		except Exception:
+			fields["tableObjRole"] = None
+
+		try:
+			fields["tableObjName"] = getattr(tableObj, "name", None)
+		except Exception:
+			fields["tableObjName"] = None
+
+		try:
+			fields["tableObjDescription"] = getattr(tableObj, "description", None)
+		except Exception:
+			fields["tableObjDescription"] = None
+
+		try:
+			fields["tableObjIA2UniqueID"] = getattr(tableObj, "IA2UniqueID", None)
+		except Exception:
+			fields["tableObjIA2UniqueID"] = None
+
+		try:
+			fields["tableObjWindowHandle"] = getattr(tableObj, "windowHandle", None)
+		except Exception:
+			fields["tableObjWindowHandle"] = None
+
+		processID = None
+		try:
+			processID = getattr(tableObj, "processID", None)
+		except Exception:
+			processID = None
+
+		if processID is None:
+			try:
+				processID = getattr(getattr(tableObj, "appModule", None), "processID", None)
+			except Exception:
+				processID = None
+
+		fields["tableObjProcessID"] = processID
+
+		try:
+			fields["tableObjChildCount"] = getattr(tableObj, "childCount", None)
+		except Exception:
+			fields["tableObjChildCount"] = None
+
+		return fields
+
+	def _getWriterIA2TableIdentityDebug(self, cellObj: object | None) -> dict[str, object]:
+		"""Return debug information for a Writer IA2 table identity candidate.
+
+		This is diagnostic-only. Do not use this as a formal TextInfo table-id
+		until stability and collision probes pass.
+		"""
+		debug: dict[str, object] = {
+			"tableObjExists": False,
+			"candidateTableID": "",
+			"candidateTableIDSource": "",
+			"candidateTableIDFailReason": "",
+		}
+
+		if cellObj is None:
+			debug["candidateTableIDFailReason"] = "cellObjMissing"
+			return debug
+
+		context: dict[str, object] = {}
+		try:
+			context = self.getContextFromObject(cellObj) or {}
+		except Exception:
+			context = {}
+
+		tableObj = (
+			context.get("tableObj")
+			or context.get("tableNVDAObject")
+			or context.get("table")
+			or self._findAncestorTableObject(cellObj)
+		)
+
+		if tableObj is None:
+			debug["candidateTableIDFailReason"] = "tableObjMissing"
+			return debug
+
+		debug["tableObjExists"] = True
+		debug["tableObjClass"] = tableObj.__class__.__name__
+		debug["tableObjModule"] = tableObj.__class__.__module__
+		debug["tableObjRole"] = getattr(tableObj, "role", None)
+		debug["tableObjName"] = getattr(tableObj, "name", None)
+		debug["tableObjDescription"] = getattr(tableObj, "description", None)
+		debug["tableObjIA2UniqueID"] = getattr(tableObj, "IA2UniqueID", None)
+		debug["tableObjWindowHandle"] = getattr(tableObj, "windowHandle", None)
+		debug["tableObjChildCount"] = getattr(tableObj, "childCount", None)
+
+		processID = getattr(tableObj, "processID", None)
+		if processID is None:
+			try:
+				processID = getattr(getattr(tableObj, "appModule", None), "processID", None)
+			except Exception:
+				processID = None
+
+		windowHandle = getattr(tableObj, "windowHandle", None)
+		ia2UniqueID = getattr(tableObj, "IA2UniqueID", None)
+
+		debug["tableObjProcessID"] = processID
+		debug["tableObjWindowHandle"] = windowHandle
+		debug["tableObjIA2UniqueID"] = ia2UniqueID
+
+		try:
+			debug["tableObjLocation"] = repr(getattr(tableObj, "location", None))
+		except Exception:
+			debug["tableObjLocation"] = ""
+
+		rowCount = context.get("nRows")
+		columnCount = context.get("nColumns")
+		debug["tableNRows"] = rowCount
+		debug["tableNColumns"] = columnCount
+
+		if processID is not None and windowHandle is not None and ia2UniqueID is not None:
+			debug["candidateTableID"] = "writer-ia2-table:%s:%s:%s" % (
+				processID,
+				windowHandle,
+				ia2UniqueID,
+			)
+			debug["candidateTableIDSource"] = "processID+windowHandle+tableIA2UniqueID"
+			return debug
+
+		if processID is not None and ia2UniqueID is not None:
+			debug["candidateTableID"] = "writer-ia2-table:%s:%s" % (
+				processID,
+				ia2UniqueID,
+			)
+			debug["candidateTableIDSource"] = "processID+tableIA2UniqueID"
+			return debug
+
+		if windowHandle is not None and ia2UniqueID is not None:
+			debug["candidateTableID"] = "writer-ia2-table:%s:%s" % (
+				windowHandle,
+				ia2UniqueID,
+			)
+			debug["candidateTableIDSource"] = "windowHandle+tableIA2UniqueID"
+			return debug
+
+		debug["candidateTableIDFailReason"] = "identityFieldsMissing"
+		return debug
+
+	def _buildWriterIA2TableControlFieldCandidate(self, cellObj: object | None) -> dict[str, object]:
+		"""Build Writer IA2 table / tableCell ControlField candidates.
+
+		This is a compatibility wrapper for existing callers. The data flow is:
+
+		cellObj
+		-> getContextFromObject()
+		-> normalizeCellInfo()
+		-> getControlFieldProperties()
+
+		Callers should continue to consume tableField and cellField from the
+		returned candidate.
+		"""
+		result: dict[str, object] = {
+			"ok": False,
+			"failReason": "",
+			"tableID": "",
+			"tableField": None,
+			"cellField": None,
+		}
+
+		if cellObj is None:
+			result["failReason"] = "cellObjMissing"
+			return result
+
+		try:
+			context = self.getContextFromObject(cellObj) or {}
+		except Exception as e:
+			result["failReason"] = "contextFailed:%s" % e
+			return result
+
+		if not context.get("inTable"):
+			result["failReason"] = context.get("failReason") or "notInTable"
+			result["context"] = context
+			return result
+
+		try:
+			cellInfo = self.normalizeCellInfo(context)
+		except Exception as e:
+			result["failReason"] = "normalizeCellInfoFailed:%s" % e
+			result["context"] = context
+			return result
+
+		if not cellInfo.get("inTable"):
+			result["failReason"] = cellInfo.get("failReason") or "notInTable"
+			result["context"] = context
+			result["cellInfo"] = cellInfo
+			return result
+
+		try:
+			fieldResult = self.getControlFieldProperties(cellInfo)
+		except Exception as e:
+			result["failReason"] = "getControlFieldPropertiesFailed:%s" % e
+			result["context"] = context
+			result["cellInfo"] = cellInfo
+			return result
+
+		if not fieldResult.get("ok"):
+			result["failReason"] = fieldResult.get("failReason") or "controlFieldPropertiesFailed"
+			result["context"] = context
+			result["cellInfo"] = cellInfo
+			result["fieldResult"] = fieldResult
+			return result
+
+		identityDebug = {
+			"tableObjExists": cellInfo.get("tableObj") is not None,
+			"candidateTableID": cellInfo.get("tableID", ""),
+			"candidateTableIDSource": cellInfo.get("tableIDSource", ""),
+			"candidateTableIDFailReason": cellInfo.get("tableIDFailReason", ""),
+			"tableObjClass": cellInfo.get("tableObjClass", ""),
+			"tableObjModule": cellInfo.get("tableObjModule", ""),
+			"tableObjRole": cellInfo.get("tableObjRole"),
+			"tableObjName": cellInfo.get("tableObjName"),
+			"tableObjDescription": cellInfo.get("tableObjDescription"),
+			"tableObjIA2UniqueID": cellInfo.get("tableObjIA2UniqueID"),
+			"tableObjWindowHandle": cellInfo.get("tableObjWindowHandle"),
+			"tableObjProcessID": cellInfo.get("tableObjProcessID"),
+			"tableObjChildCount": cellInfo.get("tableObjChildCount"),
+			"tableNRows": cellInfo.get("nRows"),
+			"tableNColumns": cellInfo.get("nColumns"),
+		}
+
+		result.update({
+			"ok": True,
+			"failReason": "",
+			"tableID": fieldResult.get("tableID", ""),
+			"tableField": fieldResult.get("tableField"),
+			"cellField": fieldResult.get("cellField"),
+			"rowNumber": fieldResult.get("rowNumber"),
+			"columnNumber": fieldResult.get("columnNumber"),
+			"rowSpan": fieldResult.get("rowSpan"),
+			"columnSpan": fieldResult.get("columnSpan"),
+			"rowCount": fieldResult.get("rowCount"),
+			"columnCount": fieldResult.get("columnCount"),
+			"identityDebug": identityDebug,
+			"context": context,
+			"cellInfo": cellInfo,
+			"fieldResult": fieldResult,
+		})
+		return result
+
 	def move(self, obj: object | None, direction: str) -> dict[str, object]:
 		"""Move one table cell in the requested direction.
 
@@ -1702,10 +2183,12 @@ class WriterIA2TableNavigator:
 			return self._fail(result, "validateTableSize", "invalidTableSize")
 
 		sourceCellObj = context.get("cellObj")
-		try:
-			tableObj = getattr(sourceCellObj, "parent", None) if sourceCellObj is not None else None
-		except Exception:
-			tableObj = None
+		tableObj = context.get("tableObj")
+		if tableObj is None:
+			try:
+				tableObj = getattr(sourceCellObj, "parent", None) if sourceCellObj is not None else None
+			except Exception:
+				tableObj = None
 
 		rowSpan, columnSpan, sourceSpanDetails = self._sanitizeSourceCellSpan(
 			context,
