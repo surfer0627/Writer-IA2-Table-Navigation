@@ -908,19 +908,486 @@ class WriterIA2TableNavigator:
 
 		return obj1IA2UniqueID is not None and obj1IA2UniqueID == obj2IA2UniqueID
 
+	def _getDirectCellCoordinateCacheTableKey(
+		self,
+		tableObj: object | None,
+	) -> tuple[object, ...] | None:
+		"""Return a stable-enough table identity for the 1i cache experiment."""
+		if tableObj is None:
+			return None
+
+		try:
+			processID = getattr(tableObj, "processID", None)
+		except Exception:
+			processID = None
+
+		try:
+			windowHandle = getattr(tableObj, "windowHandle", None)
+		except Exception:
+			windowHandle = None
+
+		try:
+			ia2UniqueID = getattr(tableObj, "IA2UniqueID", None)
+		except Exception:
+			ia2UniqueID = None
+
+		if ia2UniqueID is not None:
+			return (
+				"ia2",
+				processID,
+				windowHandle,
+				ia2UniqueID,
+			)
+
+		return (
+			"object",
+			id(tableObj),
+		)
+
+
+	def _getDirectCellCoordinateCacheState(
+		self,
+	) -> dict[str, object]:
+		"""Return the lazy single-table coordinate cache."""
+		cache = getattr(
+			self,
+			"_directCellCoordinateCache",
+			None,
+		)
+
+		if not isinstance(cache, dict):
+			cache = {
+				"built": False,
+				"tableKey": None,
+				"directChildren": [],
+				"contextByObjectIdentity": {},
+				"coordinateMap": {},
+				"coordinateCount": 0,
+				"candidateEntryCount": 0,
+			}
+			self._directCellCoordinateCache = cache
+
+		return cache
+
+
+	def _clearDirectCellCoordinateCache(self) -> None:
+		"""Discard the current 1i direct-cell coordinate cache."""
+		self._directCellCoordinateCache = {
+			"built": False,
+			"tableKey": None,
+			"directChildren": [],
+			"contextByObjectIdentity": {},
+			"coordinateMap": {},
+			"coordinateCount": 0,
+			"candidateEntryCount": 0,
+		}
+
+
+	def _buildDirectCellCoordinateCache(
+		self,
+		tableObj: object,
+		tableKey: tuple[object, ...],
+		timing: dict | None = None,
+	) -> dict[str, object]:
+		"""Build a direct-child context and covered-coordinate map.
+
+		Each coordinate stores ranked candidates rather than only one object.
+		This preserves merged-cell ranking and allows the source cell to be
+		excluded during an individual movement.
+		"""
+		import time
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantCacheBuildStartPerf",
+		)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantBeforeDirectChildrenAccessPerf",
+		)
+		try:
+			directChildren = list(
+				getattr(tableObj, "children", None) or []
+			)
+		except Exception:
+			directChildren = []
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantAfterDirectChildrenAccessPerf",
+		)
+
+		contextByObjectIdentity: dict[int, dict[str, object]] = {}
+		coordinateMap: dict[
+			tuple[int, int],
+			list[
+				tuple[
+					int,
+					int,
+					int,
+					object,
+					dict[str, object],
+				]
+			],
+		] = {}
+
+		directContextCallCount = 0
+		directContextTotalMs = 0.0
+		directValidContextCount = 0
+		candidateObjectsSeen: set[int] = set()
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantBeforeDirectScanPerf",
+		)
+
+		for childScanOrder, child in enumerate(directChildren):
+			directContextCallCount += 1
+
+			contextStart = time.perf_counter()
+			try:
+				context = self.getContextFromObject(child)
+			except Exception:
+				context = None
+			contextEnd = time.perf_counter()
+
+			directContextTotalMs += (
+				contextEnd - contextStart
+			) * 1000
+
+			if not isinstance(context, dict):
+				continue
+
+			contextByObjectIdentity[id(child)] = context
+
+			if not context.get("inTable"):
+				continue
+
+			rowIndex = context.get("rowIndex")
+			columnIndex = context.get("columnIndex")
+
+			if (
+				not isinstance(rowIndex, int)
+				or not isinstance(columnIndex, int)
+			):
+				continue
+
+			candidateObj = context.get("cellObj") or child
+			candidateObjIdentity = id(candidateObj)
+
+			contextByObjectIdentity[
+				candidateObjIdentity
+			] = context
+
+			if candidateObjIdentity in candidateObjectsSeen:
+				continue
+
+			candidateObjectsSeen.add(candidateObjIdentity)
+			directValidContextCount += 1
+
+			rowSpan = context.get("rowSpan") or 1
+			columnSpan = context.get("columnSpan") or 1
+
+			try:
+				rowSpan = max(int(rowSpan), 1)
+			except Exception:
+				rowSpan = 1
+
+			try:
+				columnSpan = max(int(columnSpan), 1)
+			except Exception:
+				columnSpan = 1
+
+			nRows = context.get("nRows")
+			nColumns = context.get("nColumns")
+
+			rowEnd = rowIndex + rowSpan
+			columnEnd = columnIndex + columnSpan
+
+			if isinstance(nRows, int):
+				rowEnd = min(rowEnd, nRows)
+
+			if isinstance(nColumns, int):
+				columnEnd = min(columnEnd, nColumns)
+
+			spanArea = rowSpan * columnSpan
+
+			for coveredRow in range(
+				rowIndex,
+				rowEnd,
+			):
+				for coveredColumn in range(
+					columnIndex,
+					columnEnd,
+				):
+					exactStartPenalty = (
+						0
+						if (
+							coveredRow == rowIndex
+							and coveredColumn == columnIndex
+						)
+						else 1
+					)
+
+					coordinateMap.setdefault(
+						(
+							coveredRow,
+							coveredColumn,
+						),
+						[],
+					).append((
+						exactStartPenalty,
+						spanArea,
+						childScanOrder,
+						candidateObj,
+						context,
+					))
+
+		for candidates in coordinateMap.values():
+			candidates.sort(
+				key=lambda item: (
+					item[0],
+					item[1],
+					item[2],
+				)
+			)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantAfterDirectScanPerf",
+		)
+
+		candidateEntryCount = sum(
+			len(candidates)
+			for candidates in coordinateMap.values()
+		)
+
+		cache: dict[str, object] = {
+			"built": True,
+			"tableKey": tableKey,
+			"directChildren": directChildren,
+			"contextByObjectIdentity": contextByObjectIdentity,
+			"coordinateMap": coordinateMap,
+			"coordinateCount": len(coordinateMap),
+			"candidateEntryCount": candidateEntryCount,
+			"directChildCount": len(directChildren),
+			"directContextCallCount": directContextCallCount,
+			"directContextTotalMs": directContextTotalMs,
+			"directValidContextCount": directValidContextCount,
+		}
+
+		self._directCellCoordinateCache = cache
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantCacheBuildEndPerf",
+		)
+
+		return cache
+
+
+	def _lookupDirectCellCoordinateCache(
+		self,
+		cache: dict[str, object],
+		row: int,
+		column: int,
+		excludeCellObj: object | None,
+		descendantLookupDebug: dict[str, object],
+		timing: dict | None = None,
+	) -> tuple[str, object | None]:
+		"""Return hit, miss, or stale for one cached coordinate."""
+		coordinateMap = cache.get("coordinateMap")
+
+		if not isinstance(coordinateMap, dict):
+			return "miss", None
+
+		candidates = coordinateMap.get(
+			(row, column),
+			[],
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"descendant.cacheCandidateCountAtCoordinate",
+			len(candidates),
+		)
+
+		if not candidates:
+			descendantLookupDebug["candidateCount"] = 0
+			return "miss", None
+
+		acceptedCandidateCount = 0
+
+		for candidate in candidates:
+			candidateObj = candidate[3]
+
+			if (
+				excludeCellObj is not None
+				and self._isSameCellObject(
+					candidateObj,
+					excludeCellObj,
+				)
+			):
+				descendantLookupDebug[
+					"skippedExcludedCellCount"
+				] = (
+					int(
+						descendantLookupDebug.get(
+							"skippedExcludedCellCount",
+						)
+						or 0
+					)
+					+ 1
+				)
+
+				try:
+					descendantLookupDebug[
+						"skippedExcludedCellDescription"
+					] = getattr(
+						candidateObj,
+						"description",
+						None,
+					)
+				except Exception:
+					descendantLookupDebug[
+						"skippedExcludedCellDescription"
+					] = None
+
+				continue
+
+			acceptedCandidateCount += 1
+
+			# 1i safety check:
+			# Do not trust a cached NVDAObject blindly across movements.
+			self._markMoveTimingProbe1c(
+				timing,
+				"descendantCacheValidationStartPerf",
+			)
+			try:
+				currentContext = self.getContextFromObject(
+					candidateObj
+				)
+			except Exception:
+				currentContext = None
+			self._markMoveTimingProbe1c(
+				timing,
+				"descendantCacheValidationEndPerf",
+			)
+
+			if not self._contextContainsCoordinate(
+				currentContext,
+				row,
+				column,
+			):
+				self._setMoveTimingProbe1cValue(
+					timing,
+					"descendant.cacheValidationOk",
+					False,
+				)
+				return "stale", None
+
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"descendant.cacheValidationOk",
+				True,
+			)
+
+			descendantLookupDebug[
+				"candidateCount"
+			] = acceptedCandidateCount
+
+			try:
+				descendantLookupDebug[
+					"selectedDescription"
+				] = getattr(
+					candidateObj,
+					"description",
+					None,
+				)
+			except Exception:
+				descendantLookupDebug[
+					"selectedDescription"
+				] = None
+
+			descendantLookupDebug[
+				"selectedSameAsExclude"
+			] = False
+
+			return "hit", candidateObj
+
+		descendantLookupDebug[
+			"candidateCount"
+		] = 0
+
+		return "miss", None
+
 	def _findDescendantCellCoveringCoordinate(
 		self,
 		tableObj: object,
 		row: int,
 		column: int,
 		excludeCellObj: object | None = None,
+		timing: dict | None = None,
 	) -> tuple[bool, object | None, str]:
 		"""Find the best descendant table cell covering the requested coordinate.
 
-		Prefer direct children of the table first, because Writer table cell objects
-		are normally immediate children of the table. Only fall back to a deeper
-		descendant scan when no direct child can cover the requested coordinate.
+		Use the 1i direct-child covered-coordinate cache first.
+		Only use deeper descendant traversal when no usable direct-child
+		candidate exists.
 		"""
+		import time
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantLookupInternalStartPerf",
+		)
+
+		stats: dict[str, object] = {
+			"resultPath": "",
+			"directChildCount": 0,
+			"directVisitedCount": 0,
+			"directContextCallCount": 0,
+			"directContextTotalMs": 0.0,
+			"directCoveringCount": 0,
+			"directCandidateCount": 0,
+			"deepScanUsed": False,
+			"deepInitialPendingCount": 0,
+			"deepVisitedCount": 0,
+			"deepContextCallCount": 0,
+			"deepContextTotalMs": 0.0,
+			"deepCoveringCount": 0,
+			"deepCandidateCount": 0,
+			"deepChildrenExpandCount": 0,
+			"deepChildrenAddedCount": 0,
+			"cacheHit": False,
+			"cacheBuilt": False,
+			"cacheRebuiltAfterStale": False,
+		}
+
+		def _writeStats() -> None:
+			for key, value in stats.items():
+				self._setMoveTimingProbe1cValue(
+					timing,
+					f"descendant.{key}",
+					value,
+				)
+
+		def _finishReturn(
+			ok: bool,
+			obj: object | None,
+			reason: str,
+			resultPath: str,
+		) -> tuple[bool, object | None, str]:
+			stats["resultPath"] = resultPath
+			_writeStats()
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"descendantLookupInternalEndPerf",
+			)
+
+			return ok, obj, reason
+
 		descendantLookupDebug: dict[str, object] = {
 			"requestedRow": row,
 			"requestedColumn": column,
@@ -933,57 +1400,346 @@ class WriterIA2TableNavigator:
 			"selectedSameAsExclude": False,
 			"failReason": "",
 		}
+
 		if excludeCellObj is not None:
 			try:
-				descendantLookupDebug["excludeCellObjDescription"] = getattr(excludeCellObj, "description", None)
+				descendantLookupDebug[
+					"excludeCellObjDescription"
+				] = getattr(
+					excludeCellObj,
+					"description",
+					None,
+				)
 			except Exception:
-				descendantLookupDebug["excludeCellObjDescription"] = None
-		self._lastDescendantCellLookupDebug = descendantLookupDebug
+				descendantLookupDebug[
+					"excludeCellObjDescription"
+				] = None
+
+		self._lastDescendantCellLookupDebug = (
+			descendantLookupDebug
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"descendant.requestedRow",
+			row,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"descendant.requestedColumn",
+			column,
+		)
 
 		if tableObj is None:
-			descendantLookupDebug["failReason"] = "tableObjMissing"
-			return False, None, "tableObjMissing"
+			descendantLookupDebug[
+				"failReason"
+			] = "tableObjMissing"
 
-		def addCandidate(
-			candidates: list[tuple[int, int, int, object]],
+			return _finishReturn(
+				False,
+				None,
+				"tableObjMissing",
+				"tableObjMissing",
+			)
+
+		tableKey = (
+			self._getDirectCellCoordinateCacheTableKey(
+				tableObj
+			)
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"descendant.cacheTableKey",
+			tableKey,
+		)
+
+		cache = self._getDirectCellCoordinateCacheState()
+
+		cacheMatchesTable = (
+			bool(cache.get("built"))
+			and cache.get("tableKey") == tableKey
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"descendant.cacheAvailableBeforeLookup",
+			cacheMatchesTable,
+		)
+
+		if cacheMatchesTable:
+			stats["directChildCount"] = int(
+				cache.get("directChildCount") or 0
+			)
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"descendantCacheLookupStartPerf",
+			)
+
+			cacheStatus, cachedObj = (
+				self._lookupDirectCellCoordinateCache(
+					cache,
+					row,
+					column,
+					excludeCellObj,
+					descendantLookupDebug,
+					timing=timing,
+				)
+			)
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"descendantCacheLookupEndPerf",
+			)
+
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"descendant.cacheLookupStatus",
+				cacheStatus,
+			)
+
+			if cacheStatus == "hit":
+				stats["cacheHit"] = True
+
+				return _finishReturn(
+					True,
+					cachedObj,
+					"",
+					"coordinateCache",
+				)
+
+			if cacheStatus == "stale":
+				stats["cacheRebuiltAfterStale"] = True
+				self._clearDirectCellCoordinateCache()
+				cacheMatchesTable = False
+
+		if not cacheMatchesTable:
+			cache = self._buildDirectCellCoordinateCache(
+				tableObj,
+				tableKey,
+				timing=timing,
+			)
+
+			stats["cacheBuilt"] = True
+			stats["directChildCount"] = int(
+				cache.get("directChildCount") or 0
+			)
+			stats["directVisitedCount"] = int(
+				cache.get("directChildCount") or 0
+			)
+			stats["directContextCallCount"] = int(
+				cache.get("directContextCallCount") or 0
+			)
+			stats["directContextTotalMs"] = float(
+				cache.get("directContextTotalMs") or 0.0
+			)
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"descendantCacheLookupStartPerf",
+			)
+
+			cacheStatus, cachedObj = (
+				self._lookupDirectCellCoordinateCache(
+					cache,
+					row,
+					column,
+					excludeCellObj,
+					descendantLookupDebug,
+					timing=timing,
+				)
+			)
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"descendantCacheLookupEndPerf",
+			)
+
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"descendant.cacheLookupStatus",
+				cacheStatus,
+			)
+
+			coordinateMap = cache.get(
+				"coordinateMap",
+				{},
+			)
+
+			if isinstance(coordinateMap, dict):
+				rawCandidates = coordinateMap.get(
+					(row, column),
+					[],
+				)
+			else:
+				rawCandidates = []
+
+			stats["directCoveringCount"] = len(
+				rawCandidates
+			)
+			stats["directCandidateCount"] = int(
+				descendantLookupDebug.get(
+					"candidateCount",
+				)
+				or 0
+			)
+
+			if cacheStatus == "hit":
+				return _finishReturn(
+					True,
+					cachedObj,
+					"",
+					"directChildrenCacheBuild",
+				)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"descendant.cacheCoordinateCount",
+			cache.get("coordinateCount", 0),
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"descendant.cacheCandidateEntryCount",
+			cache.get("candidateEntryCount", 0),
+		)
+
+		# No usable direct-child candidate.
+		# Preserve the existing deeper fallback behavior.
+		stats["deepScanUsed"] = True
+
+		directChildren = cache.get(
+			"directChildren",
+			[],
+		)
+
+		if not isinstance(directChildren, list):
+			directChildren = list(
+				directChildren or []
+			)
+
+		contextByObjectIdentity = cache.get(
+			"contextByObjectIdentity",
+			{},
+		)
+
+		if not isinstance(
+			contextByObjectIdentity,
+			dict,
+		):
+			contextByObjectIdentity = {}
+
+		def addDeepCandidate(
+			candidates: list[
+				tuple[int, int, int, object]
+			],
 			candidateObjectsSeen: set[int],
 			obj: object,
 			scanOrder: int,
 		) -> int:
-			try:
-				context = self.getContextFromObject(obj)
-			except Exception:
-				context = None
+			stats["deepContextCallCount"] = (
+				int(stats["deepContextCallCount"]) + 1
+			)
 
-			if not self._contextContainsCoordinate(context, row, column):
+			contextStart = time.perf_counter()
+
+			context = contextByObjectIdentity.get(
+				id(obj)
+			)
+
+			if context is None:
+				try:
+					context = self.getContextFromObject(
+						obj
+					)
+				except Exception:
+					context = None
+
+			contextEnd = time.perf_counter()
+
+			stats["deepContextTotalMs"] = (
+				float(stats["deepContextTotalMs"])
+				+ (
+					(contextEnd - contextStart)
+					* 1000
+				)
+			)
+
+			if not self._contextContainsCoordinate(
+				context,
+				row,
+				column,
+			):
 				return scanOrder
 
-			cellObj = context.get("cellObj") if context else None
+			stats["deepCoveringCount"] = (
+				int(stats["deepCoveringCount"]) + 1
+			)
+
+			cellObj = (
+				context.get("cellObj")
+				if context
+				else None
+			)
 			candidateObj = cellObj or obj
 
 			if (
 				excludeCellObj is not None
-				and self._isSameCellObject(candidateObj, excludeCellObj)
-			):
-				descendantLookupDebug["skippedExcludedCellCount"] = (
-					int(descendantLookupDebug.get("skippedExcludedCellCount") or 0) + 1
+				and self._isSameCellObject(
+					candidateObj,
+					excludeCellObj,
 				)
-				try:
-					descendantLookupDebug["skippedExcludedCellDescription"] = getattr(candidateObj, "description", None)
-				except Exception:
-					descendantLookupDebug["skippedExcludedCellDescription"] = None
+			):
+				descendantLookupDebug[
+					"skippedExcludedCellCount"
+				] = (
+					int(
+						descendantLookupDebug.get(
+							"skippedExcludedCellCount",
+						)
+						or 0
+					)
+					+ 1
+				)
 				return scanOrder
 
-			candidateObjIdentity = id(candidateObj)
-			if candidateObjIdentity in candidateObjectsSeen:
+			candidateObjIdentity = id(
+				candidateObj
+			)
+
+			if (
+				candidateObjIdentity
+				in candidateObjectsSeen
+			):
 				return scanOrder
 
-			candidateObjectsSeen.add(candidateObjIdentity)
+			candidateObjectsSeen.add(
+				candidateObjIdentity
+			)
 
-			rowIndex = context.get("rowIndex") if context else None
-			columnIndex = context.get("columnIndex") if context else None
-			exactStartPenalty = 0 if rowIndex == row and columnIndex == column else 1
-			spanArea = self._getContextSpanArea(context)
+			rowIndex = (
+				context.get("rowIndex")
+				if context
+				else None
+			)
+			columnIndex = (
+				context.get("columnIndex")
+				if context
+				else None
+			)
+
+			exactStartPenalty = (
+				0
+				if (
+					rowIndex == row
+					and columnIndex == column
+				)
+				else 1
+			)
+
+			spanArea = self._getContextSpanArea(
+				context
+			)
 
 			candidates.append((
 				exactStartPenalty,
@@ -991,76 +1747,126 @@ class WriterIA2TableNavigator:
 				scanOrder,
 				candidateObj,
 			))
+
 			return scanOrder + 1
 
 		def chooseBestCandidate(
-			candidates: list[tuple[int, int, int, object]],
-		) -> tuple[bool, object | None, str]:
-			descendantLookupDebug["candidateCount"] = len(candidates)
+			candidates: list[
+				tuple[int, int, int, object]
+			],
+		) -> tuple[
+			bool,
+			object | None,
+			str,
+		]:
+			descendantLookupDebug[
+				"candidateCount"
+			] = len(candidates)
 
 			if not candidates:
-				descendantLookupDebug["failReason"] = "descendantCellCoveringCoordinateNotFound"
-				return False, None, "descendantCellCoveringCoordinateNotFound"
+				descendantLookupDebug[
+					"failReason"
+				] = (
+					"descendantCellCoveringCoordinateNotFound"
+				)
 
-			candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+				return (
+					False,
+					None,
+					"descendantCellCoveringCoordinateNotFound",
+				)
+
+			candidates.sort(
+				key=lambda item: (
+					item[0],
+					item[1],
+					item[2],
+				)
+			)
+
 			selectedObj = candidates[0][3]
 
 			try:
-				descendantLookupDebug["selectedDescription"] = getattr(selectedObj, "description", None)
+				descendantLookupDebug[
+					"selectedDescription"
+				] = getattr(
+					selectedObj,
+					"description",
+					None,
+				)
 			except Exception:
-				descendantLookupDebug["selectedDescription"] = None
+				descendantLookupDebug[
+					"selectedDescription"
+				] = None
 
-			descendantLookupDebug["selectedSameAsExclude"] = (
+			descendantLookupDebug[
+				"selectedSameAsExclude"
+			] = (
 				excludeCellObj is not None
-				and self._isSameCellObject(selectedObj, excludeCellObj)
+				and self._isSameCellObject(
+					selectedObj,
+					excludeCellObj,
+				)
 			)
 
 			return True, selectedObj, ""
 
-
-		try:
-			directChildren = list(getattr(tableObj, "children", None) or [])
-		except Exception:
-			directChildren = []
-
-		# Fast path: Writer table cells are normally direct children of the table.
-		# This avoids walking into paragraphs/text objects on every table move.
-		candidates: list[tuple[int, int, int, object]] = []
-		candidateObjectsSeen: set[int] = set()
-		scanOrder = 0
-
-		for child in directChildren:
-			scanOrder = addCandidate(candidates, candidateObjectsSeen, child, scanOrder)
-
-		if candidates:
-			return chooseBestCandidate(candidates)
-
-		# Slow path: only scan deeper if direct children did not provide a covering
-		# cell. This preserves the previous fallback behavior for unusual trees.
 		maxNodes = 500
 		visitedCount = 0
 		seen: set[int] = set()
-		pending: list[object] = list(directChildren)
-		candidates = []
-		candidateObjectsSeen = set()
+		pending: list[object] = list(
+			directChildren
+		)
+
+		stats["deepInitialPendingCount"] = len(
+			pending
+		)
+
+		candidates: list[
+			tuple[int, int, int, object]
+		] = []
+		candidateObjectsSeen: set[int] = set()
 		scanOrder = 0
 
-		while pending and visitedCount < maxNodes:
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantBeforeDeepScanPerf",
+		)
+
+		while (
+			pending
+			and visitedCount < maxNodes
+		):
 			obj = pending.pop(0)
+
 			if obj is None:
 				continue
 
 			objIdentity = id(obj)
+
 			if objIdentity in seen:
 				continue
 
 			seen.add(objIdentity)
 			visitedCount += 1
 
-			scanOrder = addCandidate(candidates, candidateObjectsSeen, obj, scanOrder)
+			stats["deepVisitedCount"] = (
+				visitedCount
+			)
+
+			scanOrder = addDeepCandidate(
+				candidates,
+				candidateObjectsSeen,
+				obj,
+				scanOrder,
+			)
 
 			try:
-				children = getattr(obj, "children", None)
+				children = getattr(
+					obj,
+					"children",
+					None,
+				)
 			except Exception:
 				children = None
 
@@ -1068,11 +1874,59 @@ class WriterIA2TableNavigator:
 				continue
 
 			try:
-				pending.extend(list(children))
+				childrenList = list(children)
 			except Exception:
 				continue
 
-		return chooseBestCandidate(candidates)
+			stats["deepChildrenExpandCount"] = (
+				int(
+					stats[
+						"deepChildrenExpandCount"
+					]
+				)
+				+ 1
+			)
+
+			stats["deepChildrenAddedCount"] = (
+				int(
+					stats[
+						"deepChildrenAddedCount"
+					]
+				)
+				+ len(childrenList)
+			)
+
+			pending.extend(childrenList)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantAfterDeepScanPerf",
+		)
+
+		stats["deepCandidateCount"] = len(
+			candidates
+		)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantBeforeDeepChoosePerf",
+		)
+
+		ok, selectedObj, reason = (
+			chooseBestCandidate(candidates)
+		)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"descendantAfterDeepChoosePerf",
+		)
+
+		return _finishReturn(
+			ok,
+			selectedObj,
+			reason,
+			"deepScan",
+		)
 
 	def getTargetNVDAObject(
 		self,
@@ -1081,6 +1935,7 @@ class WriterIA2TableNavigator:
 		targetColumn: int,
 		tableObj: object | None = None,
 		sourceCellObj: object | None = None,
+		timing: dict | None = None,
 	) -> tuple[bool, object | None, str]:
 		"""Return the target table cell object for the requested table coordinate.
 
@@ -1092,6 +1947,177 @@ class WriterIA2TableNavigator:
 		accept the source cell itself as the target. This prevents false source spans
 		from causing movement to stay on the same cell.
 		"""
+		self._markMoveTimingProbe1c(
+			timing,
+			"targetLookupInternalStartPerf",
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"targetLookup.targetRow",
+			targetRow,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"targetLookup.targetColumn",
+			targetColumn,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"targetLookup.table2ObjExists",
+			table2Obj is not None,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"targetLookup.tableObjExists",
+			tableObj is not None,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"targetLookup.sourceCellObjExists",
+			sourceCellObj is not None,
+		)
+
+		def _finishReturn(
+			ok: bool,
+			targetObj: object | None,
+			failReason: str,
+			resultPath: str,
+		) -> tuple[bool, object | None, str]:
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"targetLookup.resultPath",
+				resultPath,
+			)
+			self._markMoveTimingProbe1c(
+				timing,
+				"targetLookupInternalEndPerf",
+			)
+			return ok, targetObj, failReason
+
+		def _safeClassName(obj: object | None) -> str:
+			if obj is None:
+				return "<None>"
+
+			try:
+				return obj.__class__.__name__
+			except Exception:
+				return "<unknown>"
+
+		def _safeModuleName(obj: object | None) -> str:
+			if obj is None:
+				return "<None>"
+
+			try:
+				return obj.__class__.__module__
+			except Exception:
+				return "<unknown>"
+
+		def _safeAttr(obj: object | None, attrName: str):
+			if obj is None:
+				return None
+
+			try:
+				return getattr(obj, attrName, None)
+			except Exception as e:
+				return f"<error: {e!r}>"
+
+		def _writeObjectBasics(prefix: str, obj: object | None) -> None:
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.exists",
+				obj is not None,
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.class",
+				_safeClassName(obj),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.module",
+				_safeModuleName(obj),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.role",
+				_safeAttr(obj, "role"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.description",
+				_safeAttr(obj, "description"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.IA2UniqueID",
+				_safeAttr(obj, "IA2UniqueID"),
+			)
+
+		def _writeContextBasics(prefix: str, context: dict[str, object] | None) -> None:
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.exists",
+				context is not None,
+			)
+			if not isinstance(context, dict):
+				return
+
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.inTable",
+				context.get("inTable"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.rowIndex",
+				context.get("rowIndex"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.columnIndex",
+				context.get("columnIndex"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.rowSpan",
+				context.get("rowSpan"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.columnSpan",
+				context.get("columnSpan"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.nRows",
+				context.get("nRows"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.nColumns",
+				context.get("nColumns"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.failStage",
+				context.get("failStage", ""),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				f"{prefix}.failReason",
+				context.get("failReason", ""),
+			)
+
+		def _contextCoversTarget(context: dict[str, object] | None) -> bool:
+			try:
+				return self._contextContainsCoordinate(
+					context,
+					targetRow,
+					targetColumn,
+				)
+			except Exception:
+				return False
+
 		targetLookupDebug: dict[str, object] = {
 			"sourceCellObjExists": sourceCellObj is not None,
 			"sourceCellObjDescription": None,
@@ -1106,6 +2132,12 @@ class WriterIA2TableNavigator:
 			"fallbackSkippedExcludedCellCount": 0,
 			"fallbackSkippedExcludedCellDescription": None,
 		}
+
+		_writeObjectBasics(
+			"targetLookup.sourceCellObj",
+			sourceCellObj,
+		)
+
 		if sourceCellObj is not None:
 			try:
 				targetLookupDebug["sourceCellObjDescription"] = getattr(sourceCellObj, "description", None)
@@ -1116,26 +2148,70 @@ class WriterIA2TableNavigator:
 
 		if not isinstance(targetRow, int) or not isinstance(targetColumn, int):
 			targetLookupDebug["directFailReason"] = "invalidTargetCoordinate"
-			return False, None, "invalidTargetCoordinate"
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"targetLookup.directFailReason",
+				"invalidTargetCoordinate",
+			)
+			return _finishReturn(
+				False,
+				None,
+				"invalidTargetCoordinate",
+				"invalidTargetCoordinate",
+			)
 
 		directFailReason = ""
 
 		if table2Obj is not None:
+			self._markMoveTimingProbe1c(
+				timing,
+				"targetLookupBeforeDirectCellAtPerf",
+			)
 			try:
 				targetObj = table2Obj.cellAt(targetRow, targetColumn)
 			except Exception as e:
 				targetObj = None
 				directFailReason = f"cellAtFailed: {e!r}"
 				targetLookupDebug["directFailReason"] = directFailReason
+				self._markMoveTimingProbe1c(
+					timing,
+					"targetLookupAfterDirectCellAtPerf",
+				)
 			else:
+				self._markMoveTimingProbe1c(
+					timing,
+					"targetLookupAfterDirectCellAtPerf",
+				)
+				self._setMoveTimingProbe1cValue(
+					timing,
+					"targetLookup.directCellAtReturnedObject",
+					targetObj is not None,
+				)
+				_writeObjectBasics(
+					"targetLookup.directRawObject",
+					targetObj,
+				)
+
 				if targetObj is not None:
+					self._markMoveTimingProbe1c(
+						timing,
+						"targetLookupBeforeDirectTargetContextPerf",
+					)
 					try:
 						targetContext = self.getContextFromObject(targetObj)
 					except Exception as e:
 						targetContext = None
 						directFailReason = f"targetContextFailed: {e!r}"
 						targetLookupDebug["directFailReason"] = directFailReason
+						self._markMoveTimingProbe1c(
+							timing,
+							"targetLookupAfterDirectTargetContextPerf",
+						)
 					else:
+						self._markMoveTimingProbe1c(
+							timing,
+							"targetLookupAfterDirectTargetContextPerf",
+						)
 						directFailReason = (
 							targetContext.get("failReason", "")
 							if targetContext
@@ -1143,18 +2219,74 @@ class WriterIA2TableNavigator:
 						)
 						targetLookupDebug["directFailReason"] = directFailReason
 
+					_writeContextBasics(
+						"targetLookup.directContext",
+						targetContext,
+					)
+
 					contextCellObj = targetContext.get("cellObj") if targetContext else None
 					resolvedTargetObj = contextCellObj or targetObj
 
-					if (
-						sourceCellObj is not None
-						and self._isSameCellObject(resolvedTargetObj, sourceCellObj)
-					):
+					_writeObjectBasics(
+						"targetLookup.directContextCellObj",
+						contextCellObj,
+					)
+					_writeObjectBasics(
+						"targetLookup.directResolvedObject",
+						resolvedTargetObj,
+					)
+
+					self._markMoveTimingProbe1c(
+						timing,
+						"targetLookupBeforeDirectCoordinateCheckPerf",
+					)
+					directTargetCoversRequestedCoordinate = _contextCoversTarget(targetContext)
+					self._markMoveTimingProbe1c(
+						timing,
+						"targetLookupAfterDirectCoordinateCheckPerf",
+					)
+
+					directResolvedSameAsSource = False
+					try:
+						directResolvedSameAsSource = (
+							sourceCellObj is not None
+							and self._isSameCellObject(resolvedTargetObj, sourceCellObj)
+						)
+					except Exception:
+						directResolvedSameAsSource = False
+
+					self._setMoveTimingProbe1cValue(
+						timing,
+						"targetLookup.directCoversTargetCoordinate",
+						directTargetCoversRequestedCoordinate,
+					)
+					self._setMoveTimingProbe1cValue(
+						timing,
+						"targetLookup.directResolvedSameAsSource",
+						directResolvedSameAsSource,
+					)
+
+					if directResolvedSameAsSource:
 						directFailReason = "targetObjectIsSourceCell"
 						targetLookupDebug["directRejectedBecauseSource"] = True
 						targetLookupDebug["directFailReason"] = directFailReason
-					elif self._contextContainsCoordinate(targetContext, targetRow, targetColumn):
-						return True, resolvedTargetObj, ""
+					elif directTargetCoversRequestedCoordinate:
+						self._setMoveTimingProbe1cValue(
+							timing,
+							"targetLookup.directFailReason",
+							"",
+						)
+						self._setMoveTimingProbe1cValue(
+							timing,
+							"targetLookup.directAccepted",
+							True,
+						)
+						return _finishReturn(
+							True,
+							resolvedTargetObj,
+							"",
+							"direct",
+						)
 					else:
 						directFailReason = "targetObjectDoesNotCoverRequestedCoordinate"
 						targetLookupDebug["directFailReason"] = directFailReason
@@ -1165,14 +2297,35 @@ class WriterIA2TableNavigator:
 			directFailReason = "table2ObjMissing"
 			targetLookupDebug["directFailReason"] = directFailReason
 
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"targetLookup.directAccepted",
+			False,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"targetLookup.directFailReason",
+			directFailReason,
+		)
+
 		if tableObj is not None:
 			targetLookupDebug["fallbackAttempted"] = True
 
+			self._markMoveTimingProbe1c(
+				timing,
+				"targetLookupBeforeFallbackDescendantPerf",
+			)
 			fallbackOk, fallbackObj, fallbackReason = self._findDescendantCellCoveringCoordinate(
 				tableObj,
 				targetRow,
 				targetColumn,
 				excludeCellObj=sourceCellObj,
+				timing=timing,
+
+			)
+			self._markMoveTimingProbe1c(
+				timing,
+				"targetLookupAfterFallbackDescendantPerf",
 			)
 
 			descendantDebug = getattr(self, "_lastDescendantCellLookupDebug", {})
@@ -1191,12 +2344,90 @@ class WriterIA2TableNavigator:
 				False,
 			)
 
+			_writeObjectBasics(
+				"targetLookup.fallbackObject",
+				fallbackObj,
+			)
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"targetLookupBeforeFallbackSelectedContextPerf",
+			)
+			try:
+				fallbackContext = self.getContextFromObject(fallbackObj) if fallbackObj is not None else None
+			except Exception as e:
+				fallbackContext = {
+					"inTable": False,
+					"failStage": "fallbackSelectedContext",
+					"failReason": f"fallbackSelectedContextFailed: {e!r}",
+				}
+			self._markMoveTimingProbe1c(
+				timing,
+				"targetLookupAfterFallbackSelectedContextPerf",
+			)
+
+			_writeContextBasics(
+				"targetLookup.fallbackContext",
+				fallbackContext,
+			)
+
+			fallbackCoversTargetCoordinate = _contextCoversTarget(fallbackContext)
+			fallbackSameAsSource = False
+			try:
+				fallbackSameAsSource = (
+					sourceCellObj is not None
+					and self._isSameCellObject(fallbackObj, sourceCellObj)
+				)
+			except Exception:
+				fallbackSameAsSource = False
+
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"targetLookup.fallbackOk",
+				fallbackOk,
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"targetLookup.fallbackReason",
+				fallbackReason,
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"targetLookup.fallbackSelectedDescription",
+				descendantDebug.get("selectedDescription"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"targetLookup.fallbackCoversTargetCoordinate",
+				fallbackCoversTargetCoordinate,
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"targetLookup.fallbackSameAsSource",
+				fallbackSameAsSource,
+			)
+
 			if fallbackOk:
-				return True, fallbackObj, ""
+				return _finishReturn(
+					True,
+					fallbackObj,
+					"",
+					"fallback",
+				)
 
-			return False, None, fallbackReason or directFailReason or "targetObjectNotFound"
+			return _finishReturn(
+				False,
+				None,
+				fallbackReason or directFailReason or "targetObjectNotFound",
+				"failedWithFallback",
+			)
 
-		return False, None, directFailReason or "targetObjectNotFound"
+		return _finishReturn(
+			False,
+			None,
+			directFailReason or "targetObjectNotFound",
+			"failedNoFallback",
+		)
 
 	def getContextFromObject(self, obj: object | None) -> dict[str, object]:
 		"""Return the IA2 table raw context for an object.
@@ -1640,14 +2871,29 @@ class WriterIA2TableNavigator:
 		self,
 		context: dict[str, object],
 		tableObj: object | None,
+		direction: str | None = None,
+		timing: dict | None = None,
 	) -> tuple[int, int, dict[str, object]]:
 		"""Return conservative source row/column spans for movement.
 
-		LibreOffice Writer can expose incorrect rowSpan / columnSpan for ordinary
-		cells near merged cells. If a source cell claims to span over another
-		exact-start cell in the same row or column, clamp the source span so
-		computeTargetCell does not skip over that real cell.
+		Only validate the span axis that can affect the requested movement:
+		down uses rowSpan, right uses columnSpan, while up and left do not
+		use source span when computing the target coordinate.
 		"""
+		self._markMoveTimingProbe1c(
+			timing,
+			"sanitizeInternalStartPerf",
+		)
+
+		scanStats: dict[str, int] = {
+			"foreignLookupCallCount": 0,
+			"foreignLookupChildVisitCount": 0,
+			"foreignLookupContextOkCount": 0,
+			"foreignLookupCoveringCandidateCount": 0,
+			"foreignLookupSourceExcludedCount": 0,
+			"foreignLookupAcceptedCandidateCount": 0,
+		}
+
 		rowIndex = context.get("rowIndex")
 		columnIndex = context.get("columnIndex")
 		nRows = context.get("nRows")
@@ -1678,49 +2924,314 @@ class WriterIA2TableNavigator:
 			"sourceColumnSpanClamped": False,
 		}
 
-		if not isinstance(rowIndex, int) or not isinstance(columnIndex, int):
-			details["sourceSpanSanityFailReason"] = "invalidSourceCoordinate"
+		def _writeScanStats() -> None:
+			for key, value in scanStats.items():
+				self._setMoveTimingProbe1cValue(
+					timing,
+					f"sanitize.{key}",
+					value,
+				)
+
+		def _finishReturn(
+			returnReason: str,
+		) -> tuple[int, int, dict[str, object]]:
+			details["sourceEffectiveRowSpan"] = effectiveRowSpan
+			details["sourceEffectiveColumnSpan"] = effectiveColumnSpan
+
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.returnReason",
+				returnReason,
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.finalRowSpan",
+				effectiveRowSpan,
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.finalColumnSpan",
+				effectiveColumnSpan,
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.sourceSpanSanityApplied",
+				details.get("sourceSpanSanityApplied"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.sourceRowSpanClamped",
+				details.get("sourceRowSpanClamped"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.sourceColumnSpanClamped",
+				details.get("sourceColumnSpanClamped"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.sourceSpanSanityFailReason",
+				details.get("sourceSpanSanityFailReason", ""),
+			)
+			_writeScanStats()
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"sanitizeInternalEndPerf",
+			)
 			return effectiveRowSpan, effectiveColumnSpan, details
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"sanitizeBeforeDecisionPerf",
+		)
+
+		sourceCoordinateValid = (
+			isinstance(rowIndex, int)
+			and isinstance(columnIndex, int)
+		)
+		tableObjExists = tableObj is not None
+
+		directionUsesRowSpan = direction == "down"
+		directionUsesColumnSpan = direction == "right"
+
+		rowClampScanNeededBySpan = effectiveRowSpan > 1
+		columnClampScanNeededBySpan = effectiveColumnSpan > 1
+
+		rowScanEnabledForDirection = (
+			directionUsesRowSpan
+			and rowClampScanNeededBySpan
+		)
+		columnScanEnabledForDirection = (
+			directionUsesColumnSpan
+			and columnClampScanNeededBySpan
+		)
+
+		directionFastPathApplied = (
+			sourceCoordinateValid
+			and not rowScanEnabledForDirection
+			and not columnScanEnabledForDirection
+		)
+
+		if direction in ("up", "left"):
+			directionFastPathReason = f"{direction}DoesNotUseSourceSpan"
+		elif direction == "down" and effectiveRowSpan == 1:
+			directionFastPathReason = "downRowSpanAlready1"
+		elif direction == "right" and effectiveColumnSpan == 1:
+			directionFastPathReason = "rightColumnSpanAlready1"
+		elif direction not in ("up", "down", "left", "right"):
+			directionFastPathReason = "unknownDirection"
+		else:
+			directionFastPathReason = ""
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.direction",
+			direction,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.sourceRowIndex",
+			rowIndex,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.sourceColumnIndex",
+			columnIndex,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.nRows",
+			nRows,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.nColumns",
+			nColumns,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.rawRowSpan",
+			rawRowSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.rawColumnSpan",
+			rawColumnSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.initialEffectiveRowSpan",
+			effectiveRowSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.initialEffectiveColumnSpan",
+			effectiveColumnSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.sourceCoordinateValid",
+			sourceCoordinateValid,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.tableObjExists",
+			tableObjExists,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.directionUsesRowSpan",
+			directionUsesRowSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.directionUsesColumnSpan",
+			directionUsesColumnSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.rowClampScanNeededBySpan",
+			rowClampScanNeededBySpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.columnClampScanNeededBySpan",
+			columnClampScanNeededBySpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.rowScanEnabledForDirection",
+			rowScanEnabledForDirection,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.columnScanEnabledForDirection",
+			columnScanEnabledForDirection,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.directionFastPathApplied",
+			directionFastPathApplied,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.directionFastPathReason",
+			directionFastPathReason,
+		)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"sanitizeAfterDecisionPerf",
+		)
+
+		if not sourceCoordinateValid:
+			details["sourceSpanSanityFailReason"] = "invalidSourceCoordinate"
+			return _finishReturn("invalidSourceCoordinate")
+
+		if directionFastPathApplied:
+			return _finishReturn(
+				f"directionFastPath:{directionFastPathReason}"
+			)
 
 		if tableObj is None:
 			details["sourceSpanSanityFailReason"] = "tableObjMissing"
-			return effectiveRowSpan, effectiveColumnSpan, details
+			return _finishReturn("tableObjMissing")
 
+		self._markMoveTimingProbe1c(
+			timing,
+			"sanitizeBeforeDirectChildrenPerf",
+		)
 		try:
-			directChildren = list(getattr(tableObj, "children", None) or [])
+			directChildren = list(
+				getattr(tableObj, "children", None) or []
+			)
 		except Exception as e:
-			details["sourceSpanSanityFailReason"] = f"childrenAccessFailed: {e!r}"
-			return effectiveRowSpan, effectiveColumnSpan, details
+			details["sourceSpanSanityFailReason"] = (
+				f"childrenAccessFailed: {e!r}"
+			)
+			self._markMoveTimingProbe1c(
+				timing,
+				"sanitizeAfterDirectChildrenPerf",
+			)
+			return _finishReturn("childrenAccessFailed")
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"sanitizeAfterDirectChildrenPerf",
+		)
 
 		details["sourceSpanSanityDirectChildCount"] = len(directChildren)
 
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.directChildCount",
+			len(directChildren),
+		)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"sanitizeBeforeSourceIdentityPerf",
+		)
+
 		sourceCellObj = context.get("cellObj")
-		sourceCellObjIdentity = id(sourceCellObj) if sourceCellObj is not None else None
+		sourceCellObjIdentity = (
+			id(sourceCellObj)
+			if sourceCellObj is not None
+			else None
+		)
 
 		try:
-			sourceCellIA2UniqueID = getattr(sourceCellObj, "IA2UniqueID", None)
+			sourceCellIA2UniqueID = getattr(
+				sourceCellObj,
+				"IA2UniqueID",
+				None,
+			)
 		except Exception:
 			sourceCellIA2UniqueID = None
 
-		def isSourceCellObject(cellObj: object | None, cellContext: dict[str, object]) -> bool:
-			"""Return True if the candidate is the source cell itself.
+		self._markMoveTimingProbe1c(
+			timing,
+			"sanitizeAfterSourceIdentityPerf",
+		)
 
-			Object identity is preferred, but IA2 objects may be re-wrapped while
-			still representing the same underlying cell. IA2UniqueID and the source
-			start coordinate are used as conservative fallbacks.
-			"""
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.sourceCellObjExists",
+			sourceCellObj is not None,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"sanitize.sourceCellIA2UniqueID",
+			sourceCellIA2UniqueID,
+		)
+
+		def isSourceCellObject(
+			cellObj: object | None,
+			cellContext: dict[str, object],
+		) -> bool:
 			if cellObj is None:
 				return False
 
-			if sourceCellObjIdentity is not None and id(cellObj) == sourceCellObjIdentity:
+			if (
+				sourceCellObjIdentity is not None
+				and id(cellObj) == sourceCellObjIdentity
+			):
 				return True
 
 			try:
-				cellIA2UniqueID = getattr(cellObj, "IA2UniqueID", None)
+				cellIA2UniqueID = getattr(
+					cellObj,
+					"IA2UniqueID",
+					None,
+				)
 			except Exception:
 				cellIA2UniqueID = None
 
-			if sourceCellIA2UniqueID is not None and cellIA2UniqueID == sourceCellIA2UniqueID:
+			if (
+				sourceCellIA2UniqueID is not None
+				and cellIA2UniqueID == sourceCellIA2UniqueID
+			):
 				return True
 
 			return (
@@ -1731,30 +3242,47 @@ class WriterIA2TableNavigator:
 		def getForeignCoveringCell(
 			targetRow: int,
 			targetColumn: int,
-		) -> tuple[bool, object | None, dict[str, object] | None]:
-			"""Find the best non-source cell that covers the requested coordinate.
-
-			Do not return the first covering cell. Writer may expose false spans on
-			neighbouring ordinary cells, so exact-start cells and smaller spans must
-			win over broad false-span candidates.
-			"""
-			candidates: list[tuple[int, int, int, object, dict[str, object]]] = []
+		) -> tuple[
+			bool,
+			object | None,
+			dict[str, object] | None,
+		]:
+			candidates: list[
+				tuple[
+					int,
+					int,
+					int,
+					object,
+					dict[str, object],
+				]
+			] = []
 			scanOrder = 0
 
+			scanStats["foreignLookupCallCount"] += 1
+
 			for child in directChildren:
+				scanStats["foreignLookupChildVisitCount"] += 1
+
 				try:
 					childContext = self.getContextFromObject(child)
 				except Exception:
 					continue
 
-				if not childContext or not childContext.get("inTable"):
+				if (
+					not childContext
+					or not childContext.get("inTable")
+				):
 					continue
 
+				scanStats["foreignLookupContextOkCount"] += 1
+
 				try:
-					coversCoordinate = self._contextContainsCoordinate(
-						childContext,
-						targetRow,
-						targetColumn,
+					coversCoordinate = (
+						self._contextContainsCoordinate(
+							childContext,
+							targetRow,
+							targetColumn,
+						)
 					)
 				except Exception:
 					coversCoordinate = False
@@ -1762,19 +3290,34 @@ class WriterIA2TableNavigator:
 				if not coversCoordinate:
 					continue
 
+				scanStats[
+					"foreignLookupCoveringCandidateCount"
+				] += 1
+
 				cellObj = childContext.get("cellObj") or child
-				if isSourceCellObject(cellObj, childContext):
+				if isSourceCellObject(
+					cellObj,
+					childContext,
+				):
+					scanStats[
+						"foreignLookupSourceExcludedCount"
+					] += 1
 					continue
 
 				exactStartPenalty = (
 					0
 					if (
-						childContext.get("rowIndex") == targetRow
-						and childContext.get("columnIndex") == targetColumn
+						childContext.get("rowIndex")
+						== targetRow
+						and childContext.get("columnIndex")
+						== targetColumn
 					)
 					else 1
 				)
-				spanArea = self._getContextSpanArea(childContext)
+
+				spanArea = self._getContextSpanArea(
+					childContext
+				)
 
 				candidates.append((
 					exactStartPenalty,
@@ -1783,56 +3326,177 @@ class WriterIA2TableNavigator:
 					cellObj,
 					childContext,
 				))
+
+				scanStats[
+					"foreignLookupAcceptedCandidateCount"
+				] += 1
 				scanOrder += 1
 
 			if not candidates:
 				return False, None, None
 
-			candidates.sort(key=lambda item: (item[0], item[1], item[2]))
-			return True, candidates[0][3], candidates[0][4]
+			candidates.sort(
+				key=lambda item: (
+					item[0],
+					item[1],
+					item[2],
+				)
+			)
 
-		rowLimit = rowIndex + effectiveRowSpan
-		if isinstance(nRows, int):
-			rowLimit = min(rowLimit, nRows)
+			return (
+				True,
+				candidates[0][3],
+				candidates[0][4],
+			)
 
-		for checkRow in range(rowIndex + 1, rowLimit):
-			exists, blockerObj, blockerContext = getForeignCoveringCell(checkRow, columnIndex)
-			if not exists:
-				continue
+		if rowScanEnabledForDirection:
+			self._markMoveTimingProbe1c(
+				timing,
+				"sanitizeBeforeRowClampScanPerf",
+			)
 
-			effectiveRowSpan = max(checkRow - rowIndex, 1)
-			details["sourceSpanSanityApplied"] = True
-			details["sourceRowSpanClamped"] = True
-			details["sourceRowSpanBlockerRow"] = checkRow
-			try:
-				details["sourceRowSpanBlockerDescription"] = getattr(blockerObj, "description", None)
-			except Exception:
-				details["sourceRowSpanBlockerDescription"] = None
-			break
+			rowLimit = rowIndex + effectiveRowSpan
+			if isinstance(nRows, int):
+				rowLimit = min(rowLimit, nRows)
 
-		columnLimit = columnIndex + effectiveColumnSpan
-		if isinstance(nColumns, int):
-			columnLimit = min(columnLimit, nColumns)
+			rowClampCandidateCount = max(
+				rowLimit - (rowIndex + 1),
+				0,
+			)
 
-		for checkColumn in range(columnIndex + 1, columnLimit):
-			exists, blockerObj, blockerContext = getForeignCoveringCell(rowIndex, checkColumn)
-			if not exists:
-				continue
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.rowClampCandidateCount",
+				rowClampCandidateCount,
+			)
 
-			effectiveColumnSpan = max(checkColumn - columnIndex, 1)
-			details["sourceSpanSanityApplied"] = True
-			details["sourceColumnSpanClamped"] = True
-			details["sourceColumnSpanBlockerColumn"] = checkColumn
-			try:
-				details["sourceColumnSpanBlockerDescription"] = getattr(blockerObj, "description", None)
-			except Exception:
-				details["sourceColumnSpanBlockerDescription"] = None
-			break
+			for checkRow in range(
+				rowIndex + 1,
+				rowLimit,
+			):
+				exists, blockerObj, blockerContext = (
+					getForeignCoveringCell(
+						checkRow,
+						columnIndex,
+					)
+				)
 
-		details["sourceEffectiveRowSpan"] = effectiveRowSpan
-		details["sourceEffectiveColumnSpan"] = effectiveColumnSpan
+				if not exists:
+					continue
 
-		return effectiveRowSpan, effectiveColumnSpan, details
+				effectiveRowSpan = max(
+					checkRow - rowIndex,
+					1,
+				)
+
+				details["sourceSpanSanityApplied"] = True
+				details["sourceRowSpanClamped"] = True
+				details["sourceRowSpanBlockerRow"] = checkRow
+
+				try:
+					details[
+						"sourceRowSpanBlockerDescription"
+					] = getattr(
+						blockerObj,
+						"description",
+						None,
+					)
+				except Exception:
+					details[
+						"sourceRowSpanBlockerDescription"
+					] = None
+
+				break
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"sanitizeAfterRowClampScanPerf",
+			)
+		else:
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.rowClampCandidateCount",
+				0,
+			)
+
+		if columnScanEnabledForDirection:
+			self._markMoveTimingProbe1c(
+				timing,
+				"sanitizeBeforeColumnClampScanPerf",
+			)
+
+			columnLimit = columnIndex + effectiveColumnSpan
+			if isinstance(nColumns, int):
+				columnLimit = min(
+					columnLimit,
+					nColumns,
+				)
+
+			columnClampCandidateCount = max(
+				columnLimit - (columnIndex + 1),
+				0,
+			)
+
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.columnClampCandidateCount",
+				columnClampCandidateCount,
+			)
+
+			for checkColumn in range(
+				columnIndex + 1,
+				columnLimit,
+			):
+				exists, blockerObj, blockerContext = (
+					getForeignCoveringCell(
+						rowIndex,
+						checkColumn,
+					)
+				)
+
+				if not exists:
+					continue
+
+				effectiveColumnSpan = max(
+					checkColumn - columnIndex,
+					1,
+				)
+
+				details["sourceSpanSanityApplied"] = True
+				details[
+					"sourceColumnSpanClamped"
+				] = True
+				details[
+					"sourceColumnSpanBlockerColumn"
+				] = checkColumn
+
+				try:
+					details[
+						"sourceColumnSpanBlockerDescription"
+					] = getattr(
+						blockerObj,
+						"description",
+						None,
+					)
+				except Exception:
+					details[
+						"sourceColumnSpanBlockerDescription"
+					] = None
+
+				break
+
+			self._markMoveTimingProbe1c(
+				timing,
+				"sanitizeAfterColumnClampScanPerf",
+			)
+		else:
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"sanitize.columnClampCandidateCount",
+				0,
+			)
+
+		return _finishReturn("completed")
 
 	def _findAncestorTableObject(self, obj: object | None) -> object | None:
 		"""Find the nearest ancestor table object for a Writer IA2 cell."""
@@ -2141,134 +3805,230 @@ class WriterIA2TableNavigator:
 		})
 		return result
 
-	def move(self, obj: object | None, direction: str) -> dict[str, object]:
-		"""Move one table cell in the requested direction.
+	def _markMoveTimingProbe1c(
+		self,
+		timing: dict | None,
+		key: str,
+	) -> None:
+		if not isinstance(timing, dict):
+			return
 
-		:param obj: Starting NVDAObject.
-		:param direction: One of up, down, left, or right.
-		:return: A stable result dictionary for scripts and probes.
+		try:
+			import time
+
+			timing[key] = time.perf_counter()
+		except Exception:
+			pass
+
+
+	def _setMoveTimingProbe1cValue(
+		self,
+		timing: dict | None,
+		key: str,
+		value,
+	) -> None:
+		if not isinstance(timing, dict):
+			return
+
+		try:
+			timing[key] = value
+		except Exception:
+			pass
+
+	def moveToCoordinate(
+		self,
+		context: dict[str, object],
+		targetRow: int,
+		targetColumn: int,
+		result: dict[str, object],
+		allowSourceCell: bool = False,
+		timing: dict | None = None,
+	) -> dict[str, object]:
+		"""Move to a specific table coordinate using the existing target lookup and focus route.
+
+		:param context: Current Writer IA2 table context.
+		:param targetRow: Zero-based target row.
+		:param targetColumn: Zero-based target column.
+		:param result: Existing navigation result dictionary.
+		:param allowSourceCell: Whether the current source cell may be accepted as the target.
+		:param timing: Optional timing dictionary for move timing probes.
+		:return: The updated navigation result dictionary.
 		"""
-		result = self._newResult(direction)
-
-		context = self.getContextFromObject(obj)
-		if not context["inTable"]:
-			return self._fail(
-				result,
-				str(context["failStage"]),
-				str(context["failReason"]),
-			)
-
-		rowIndex = context["rowIndex"]
-		columnIndex = context["columnIndex"]
-		rowSpan = context.get("rowSpan") or 1
-		columnSpan = context.get("columnSpan") or 1
-		nRows = context["nRows"]
-		nColumns = context["nColumns"]
-		table2Obj = context["table2Obj"]
-
-		if not isinstance(rowIndex, int) or not isinstance(columnIndex, int):
-			return self._fail(result, "validateCoordinates", "invalidCoordinates")
-
-		try:
-			rowSpan = max(int(rowSpan), 1)
-		except Exception:
-			rowSpan = 1
-
-		try:
-			columnSpan = max(int(columnSpan), 1)
-		except Exception:
-			columnSpan = 1
-
-		if not isinstance(nRows, int) or not isinstance(nColumns, int):
-			return self._fail(result, "validateTableSize", "invalidTableSize")
-
+		table2Obj = context.get("table2Obj")
 		sourceCellObj = context.get("cellObj")
 		tableObj = context.get("tableObj")
+
 		if tableObj is None:
 			try:
-				tableObj = getattr(sourceCellObj, "parent", None) if sourceCellObj is not None else None
+				tableObj = (
+					getattr(sourceCellObj, "parent", None)
+					if sourceCellObj is not None
+					else None
+				)
 			except Exception:
 				tableObj = None
-
-		rowSpan, columnSpan, sourceSpanDetails = self._sanitizeSourceCellSpan(
-			context,
-			tableObj,
-		)
-		result.update(sourceSpanDetails)
-
-		result["beforeRowIndex"] = rowIndex
-		result["beforeColumnIndex"] = columnIndex
-		result["beforeRowSpan"] = rowSpan
-		result["beforeColumnSpan"] = columnSpan
-		result["beforeEffectiveRowSpan"] = rowSpan
-		result["beforeEffectiveColumnSpan"] = columnSpan
-		result["nRows"] = nRows
-		result["nColumns"] = nColumns
-
-		targetOk, targetRow, targetColumn, targetFailReason = self.computeTargetCell(
-			rowIndex,
-			columnIndex,
-			nRows,
-			nColumns,
-			direction,
-			rowSpan=rowSpan,
-			columnSpan=columnSpan,
-		)
 
 		result["targetRow"] = targetRow
 		result["targetColumn"] = targetColumn
 
-		if not targetOk:
-			edgeReason = self._getEdgeReason(
-				direction,
-				targetRow,
-				targetColumn,
-				nRows,
-				nColumns,
-			)
-			return self._edge(result, edgeReason, targetRow, targetColumn)
+		lookupSourceCellObj = (
+			None
+			if allowSourceCell
+			else sourceCellObj
+		)
 
-		if not isinstance(targetRow, int) or not isinstance(targetColumn, int):
-			return self._fail(result, "computeTargetCell", targetFailReason)
-
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeTargetLookupPerf",
+		)
 		targetOk, targetNVDAObject, targetFailReason = self.getTargetNVDAObject(
 			table2Obj,
 			targetRow,
 			targetColumn,
 			tableObj=tableObj,
-			sourceCellObj=sourceCellObj,
+			sourceCellObj=lookupSourceCellObj,
+			timing=timing,
 		)
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterTargetLookupPerf",
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetLookupOk",
+			targetOk,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetLookupFailReason",
+			targetFailReason,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetObjectExists",
+			targetNVDAObject is not None,
+		)
+
+		try:
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.targetObjectClass",
+				targetNVDAObject.__class__.__name__
+				if targetNVDAObject is not None
+				else "<None>",
+			)
+		except Exception:
+			pass
+
 		if not targetOk:
-			return self._fail(result, "getTargetNVDAObject", targetFailReason)
+			return self._fail(
+				result,
+				"getTargetNVDAObject",
+				targetFailReason,
+			)
 
 		result["targetNVDAObject"] = targetNVDAObject
 		result["targetNVDAObjectClass"] = targetNVDAObject.__class__.__name__
 		result["targetNVDAObjectModule"] = targetNVDAObject.__class__.__module__
-		result["targetNVDAObjectRole"] = getattr(targetNVDAObject, "role", None)
+		result["targetNVDAObjectRole"] = getattr(
+			targetNVDAObject,
+			"role",
+			None,
+		)
 
 		# Verify the target object before moving focus.
 		# In block-merged tables, getTargetNVDAObject may return a merged
 		# owner cell that does not actually cover the requested coordinate.
 		# Do not call setFocus until this is known to be safe.
-		targetContext = self.getContextFromObject(targetNVDAObject)
-
-		targetObjectRowIndex = targetContext.get("rowIndex")
-		targetObjectColumnIndex = targetContext.get("columnIndex")
-		targetObjectRowSpan = targetContext.get("rowSpan")
-		targetObjectColumnSpan = targetContext.get("columnSpan")
-
-		result["targetObjectRowIndex"] = targetObjectRowIndex
-		result["targetObjectColumnIndex"] = targetObjectColumnIndex
-		result["targetObjectRowSpan"] = targetObjectRowSpan
-		result["targetObjectColumnSpan"] = targetObjectColumnSpan
-
-		targetObjectMatchesTarget = self._contextContainsCoordinate(
-			targetContext,
-			targetRow,
-			targetColumn,
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeTargetVerifyContextPerf",
+		)
+		targetContext = self.getContextFromObject(
+			targetNVDAObject
+		)
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterTargetVerifyContextPerf",
 		)
 
-		result["targetObjectMatchesTarget"] = targetObjectMatchesTarget
+		targetObjectRowIndex = targetContext.get(
+			"rowIndex"
+		)
+		targetObjectColumnIndex = targetContext.get(
+			"columnIndex"
+		)
+		targetObjectRowSpan = targetContext.get(
+			"rowSpan"
+		)
+		targetObjectColumnSpan = targetContext.get(
+			"columnSpan"
+		)
+
+		result["targetObjectRowIndex"] = (
+			targetObjectRowIndex
+		)
+		result["targetObjectColumnIndex"] = (
+			targetObjectColumnIndex
+		)
+		result["targetObjectRowSpan"] = (
+			targetObjectRowSpan
+		)
+		result["targetObjectColumnSpan"] = (
+			targetObjectColumnSpan
+		)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeTargetCoordinateVerifyPerf",
+		)
+		targetObjectMatchesTarget = (
+			self._contextContainsCoordinate(
+				targetContext,
+				targetRow,
+				targetColumn,
+			)
+		)
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterTargetCoordinateVerifyPerf",
+		)
+
+		result["targetObjectMatchesTarget"] = (
+			targetObjectMatchesTarget
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetContextInTable",
+			targetContext.get("inTable"),
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetObjectRowIndex",
+			targetObjectRowIndex,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetObjectColumnIndex",
+			targetObjectColumnIndex,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetObjectRowSpan",
+			targetObjectRowSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetObjectColumnSpan",
+			targetObjectColumnSpan,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetObjectMatchesTarget",
+			targetObjectMatchesTarget,
+		)
 
 		if not targetContext.get("inTable"):
 			return self._fail(
@@ -2287,35 +4047,96 @@ class WriterIA2TableNavigator:
 		setFocusOk = False
 		setFocusFailReason = ""
 
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeTargetSetFocusPerf",
+		)
+
 		try:
 			targetNVDAObject.setFocus()
 			setFocusOk = True
 		except Exception as e:
 			setFocusFailReason = repr(e)
 
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterTargetSetFocusPerf",
+		)
+
 		result["setFocusOk"] = setFocusOk
 
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetSetFocusOk",
+			setFocusOk,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetSetFocusFailReason",
+			setFocusFailReason,
+		)
+
 		if not setFocusOk:
-			return self._fail(result, "setFocus", setFocusFailReason)
+			return self._fail(
+				result,
+				"setFocus",
+				setFocusFailReason,
+			)
 
 		apiSetFocusObjectOk = False
 		apiSetFocusObjectFailReason = ""
 
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeApiSetFocusObjectPerf",
+		)
+
 		try:
-			api.setFocusObject(targetNVDAObject)
+			api.setFocusObject(
+				targetNVDAObject
+			)
 			apiSetFocusObjectOk = True
 		except Exception as e:
 			apiSetFocusObjectFailReason = repr(e)
 
-		result["apiSetFocusObjectOk"] = apiSetFocusObjectOk
-		result["apiSetFocusObjectFailReason"] = apiSetFocusObjectFailReason
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterApiSetFocusObjectPerf",
+		)
 
-		# Keep legacy after* fields for existing probes. These describe the
-		# accepted target object, not necessarily a fresh focus event from NVDA.
-		result["afterRowIndex"] = targetObjectRowIndex
-		result["afterColumnIndex"] = targetObjectColumnIndex
-		result["afterRowSpan"] = targetObjectRowSpan
-		result["afterColumnSpan"] = targetObjectColumnSpan
+		result["apiSetFocusObjectOk"] = (
+			apiSetFocusObjectOk
+		)
+		result["apiSetFocusObjectFailReason"] = (
+			apiSetFocusObjectFailReason
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.apiSetFocusObjectOk",
+			apiSetFocusObjectOk,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.apiSetFocusObjectFailReason",
+			apiSetFocusObjectFailReason,
+		)
+
+		# Keep legacy after* fields for existing probes.
+		# These describe the accepted target object, not necessarily
+		# a fresh focus event from NVDA.
+		result["afterRowIndex"] = (
+			targetObjectRowIndex
+		)
+		result["afterColumnIndex"] = (
+			targetObjectColumnIndex
+		)
+		result["afterRowSpan"] = (
+			targetObjectRowSpan
+		)
+		result["afterColumnSpan"] = (
+			targetObjectColumnSpan
+		)
 
 		apiFocusRowIndex = None
 		apiFocusColumnIndex = None
@@ -2323,36 +4144,511 @@ class WriterIA2TableNavigator:
 		apiFocusColumnSpan = None
 		apiFocusMatchesTarget = False
 
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeApiFocusCheckPerf",
+		)
+
 		try:
 			apiFocusObj = api.getFocusObject()
-			apiFocusContext = self.getContextFromObject(apiFocusObj)
-			apiFocusRowIndex = apiFocusContext.get("rowIndex")
-			apiFocusColumnIndex = apiFocusContext.get("columnIndex")
-			apiFocusRowSpan = apiFocusContext.get("rowSpan")
-			apiFocusColumnSpan = apiFocusContext.get("columnSpan")
-			apiFocusMatchesTarget = self._contextContainsCoordinate(
-				apiFocusContext,
-				targetRow,
-				targetColumn,
+			apiFocusContext = self.getContextFromObject(
+				apiFocusObj
+			)
+
+			apiFocusRowIndex = apiFocusContext.get(
+				"rowIndex"
+			)
+			apiFocusColumnIndex = apiFocusContext.get(
+				"columnIndex"
+			)
+			apiFocusRowSpan = apiFocusContext.get(
+				"rowSpan"
+			)
+			apiFocusColumnSpan = apiFocusContext.get(
+				"columnSpan"
+			)
+
+			apiFocusMatchesTarget = (
+				self._contextContainsCoordinate(
+					apiFocusContext,
+					targetRow,
+					targetColumn,
+				)
 			)
 		except Exception:
 			apiFocusMatchesTarget = False
 
-		result["apiFocusRowIndex"] = apiFocusRowIndex
-		result["apiFocusColumnIndex"] = apiFocusColumnIndex
-		result["apiFocusRowSpan"] = apiFocusRowSpan
-		result["apiFocusColumnSpan"] = apiFocusColumnSpan
-		result["apiFocusMatchesTarget"] = apiFocusMatchesTarget
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterApiFocusCheckPerf",
+		)
+
+		result["apiFocusRowIndex"] = (
+			apiFocusRowIndex
+		)
+		result["apiFocusColumnIndex"] = (
+			apiFocusColumnIndex
+		)
+		result["apiFocusRowSpan"] = (
+			apiFocusRowSpan
+		)
+		result["apiFocusColumnSpan"] = (
+			apiFocusColumnSpan
+		)
+		result["apiFocusMatchesTarget"] = (
+			apiFocusMatchesTarget
+		)
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.apiFocusRowIndex",
+			apiFocusRowIndex,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.apiFocusColumnIndex",
+			apiFocusColumnIndex,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.apiFocusMatchesTarget",
+			apiFocusMatchesTarget,
+		)
 
 		# Keep this legacy field for existing probes.
 		# Here it means the target object matches the requested target cell,
 		# not necessarily that api.getFocusObject() has already updated.
-		result["landedOnTarget"] = targetObjectMatchesTarget
+		result["landedOnTarget"] = (
+			targetObjectMatchesTarget
+		)
 
 		result["ok"] = True
 		result["moved"] = True
 
 		return result
+
+	def moveToBoundary(
+		self,
+		obj: object | None,
+		movement: str,
+		axis: str,
+		timing: dict | None = None,
+	) -> dict[str, object]:
+		"""Move to the first or last table cell on the requested axis.
+
+		:param obj: Starting NVDAObject.
+		:param movement: Either first or last.
+		:param axis: Either row or column.
+		:param timing: Optional timing dictionary for move timing probes.
+		:return: A stable navigation result dictionary.
+		"""
+		if movement not in ("first", "last"):
+			result = self._newResult("boundary")
+			return self._fail(
+				result,
+				"validateBoundaryMovement",
+				"unsupportedBoundaryMovement",
+			)
+
+		if axis not in ("row", "column"):
+			result = self._newResult("boundary")
+			return self._fail(
+				result,
+				"validateBoundaryAxis",
+				"unsupportedBoundaryAxis",
+			)
+
+		operation = (
+			f"{movement}{axis[0].upper()}{axis[1:]}"
+		)
+		result = self._newResult(operation)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorInternalStartPerf",
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.direction",
+			operation,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.boundaryMovement",
+			movement,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.boundaryAxis",
+			axis,
+		)
+
+		def _finishReturn(
+			moveResult: dict[str, object],
+		) -> dict[str, object]:
+			self._markMoveTimingProbe1c(
+				timing,
+				"navigatorInternalEndPerf",
+			)
+			return moveResult
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeGetCurrentContextPerf",
+		)
+		context = self.getContextFromObject(obj)
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterGetCurrentContextPerf",
+		)
+
+		if not context.get("inTable"):
+			return _finishReturn(
+				self._fail(
+					result,
+					str(
+						context.get(
+							"failStage",
+							"",
+						)
+					),
+					str(
+						context.get(
+							"failReason",
+							"",
+						)
+					),
+				)
+			)
+
+		rowIndex = context.get("rowIndex")
+		columnIndex = context.get(
+			"columnIndex"
+		)
+		nRows = context.get("nRows")
+		nColumns = context.get("nColumns")
+
+		if (
+			not isinstance(rowIndex, int)
+			or not isinstance(columnIndex, int)
+		):
+			return _finishReturn(
+				self._fail(
+					result,
+					"validateCoordinates",
+					"invalidCoordinates",
+				)
+			)
+
+		if (
+			not isinstance(nRows, int)
+			or not isinstance(nColumns, int)
+			or nRows <= 0
+			or nColumns <= 0
+		):
+			return _finishReturn(
+				self._fail(
+					result,
+					"validateTableSize",
+					"invalidTableSize",
+				)
+			)
+
+		result["beforeRowIndex"] = rowIndex
+		result["beforeColumnIndex"] = (
+			columnIndex
+		)
+		result["nRows"] = nRows
+		result["nColumns"] = nColumns
+
+		targetRow = rowIndex
+		targetColumn = columnIndex
+
+		if movement == "first":
+			if axis == "row":
+				targetRow = 0
+			else:
+				targetColumn = 0
+		else:
+			if axis == "row":
+				targetRow = nRows - 1
+			else:
+				targetColumn = nColumns - 1
+
+		result["targetRow"] = targetRow
+		result["targetColumn"] = targetColumn
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetRow",
+			targetRow,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetColumn",
+			targetColumn,
+		)
+
+		return _finishReturn(
+			self.moveToCoordinate(
+				context,
+				targetRow,
+				targetColumn,
+				result,
+				allowSourceCell=True,
+				timing=timing,
+			)
+		)
+
+	def move(
+		self,
+		obj: object | None,
+		direction: str,
+		timing: dict | None = None,
+	) -> dict[str, object]:
+		"""Move one table cell in the requested direction.
+
+		:param obj: Starting NVDAObject.
+		:param direction: One of up, down, left, or right.
+		:param timing: Optional timing dictionary for move timing probes.
+		:return: A stable result dictionary for scripts and probes.
+		"""
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorInternalStartPerf",
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.direction",
+			direction,
+		)
+
+		result = self._newResult(direction)
+
+		def _finishReturn(moveResult: dict[str, object]) -> dict[str, object]:
+			self._markMoveTimingProbe1c(
+				timing,
+				"navigatorInternalEndPerf",
+			)
+			return moveResult
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeGetCurrentContextPerf",
+		)
+		context = self.getContextFromObject(obj)
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterGetCurrentContextPerf",
+		)
+
+		try:
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextInTable",
+				bool(context.get("inTable")),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextRowIndex",
+				context.get("rowIndex"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextColumnIndex",
+				context.get("columnIndex"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextRowSpan",
+				context.get("rowSpan"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextColumnSpan",
+				context.get("columnSpan"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextNRows",
+				context.get("nRows"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextNColumns",
+				context.get("nColumns"),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextFailStage",
+				context.get("failStage", ""),
+			)
+			self._setMoveTimingProbe1cValue(
+				timing,
+				"navigator.contextFailReason",
+				context.get("failReason", ""),
+			)
+		except Exception:
+			pass
+
+		if not context["inTable"]:
+			return _finishReturn(
+				self._fail(
+					result,
+					str(context["failStage"]),
+					str(context["failReason"]),
+				)
+			)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeValidateContextPerf",
+		)
+
+		rowIndex = context["rowIndex"]
+		columnIndex = context["columnIndex"]
+		rowSpan = context.get("rowSpan") or 1
+		columnSpan = context.get("columnSpan") or 1
+		nRows = context["nRows"]
+		nColumns = context["nColumns"]
+		table2Obj = context["table2Obj"]
+
+		if not isinstance(rowIndex, int) or not isinstance(columnIndex, int):
+			self._markMoveTimingProbe1c(
+				timing,
+				"navigatorAfterValidateContextPerf",
+			)
+			return _finishReturn(
+				self._fail(result, "validateCoordinates", "invalidCoordinates")
+			)
+
+		try:
+			rowSpan = max(int(rowSpan), 1)
+		except Exception:
+			rowSpan = 1
+
+		try:
+			columnSpan = max(int(columnSpan), 1)
+		except Exception:
+			columnSpan = 1
+
+		if not isinstance(nRows, int) or not isinstance(nColumns, int):
+			self._markMoveTimingProbe1c(
+				timing,
+				"navigatorAfterValidateContextPerf",
+			)
+			return _finishReturn(
+				self._fail(result, "validateTableSize", "invalidTableSize")
+			)
+
+		sourceCellObj = context.get("cellObj")
+		tableObj = context.get("tableObj")
+		if tableObj is None:
+			try:
+				tableObj = getattr(sourceCellObj, "parent", None) if sourceCellObj is not None else None
+			except Exception:
+				tableObj = None
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterValidateContextPerf",
+		)
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeSanitizeSourceSpanPerf",
+		)
+		rowSpan, columnSpan, sourceSpanDetails = self._sanitizeSourceCellSpan(
+			context,
+			tableObj,
+			direction=direction,
+			timing=timing,
+		)
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterSanitizeSourceSpanPerf",
+		)
+
+		result.update(sourceSpanDetails)
+
+		result["beforeRowIndex"] = rowIndex
+		result["beforeColumnIndex"] = columnIndex
+		result["beforeRowSpan"] = rowSpan
+		result["beforeColumnSpan"] = columnSpan
+		result["beforeEffectiveRowSpan"] = rowSpan
+		result["beforeEffectiveColumnSpan"] = columnSpan
+		result["nRows"] = nRows
+		result["nColumns"] = nColumns
+
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorBeforeTargetCoordinatePerf",
+		)
+		targetOk, targetRow, targetColumn, targetFailReason = self.computeTargetCell(
+			rowIndex,
+			columnIndex,
+			nRows,
+			nColumns,
+			direction,
+			rowSpan=rowSpan,
+			columnSpan=columnSpan,
+		)
+		self._markMoveTimingProbe1c(
+			timing,
+			"navigatorAfterTargetCoordinatePerf",
+		)
+
+		result["targetRow"] = targetRow
+		result["targetColumn"] = targetColumn
+
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetRow",
+			targetRow,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetColumn",
+			targetColumn,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetOk",
+			targetOk,
+		)
+		self._setMoveTimingProbe1cValue(
+			timing,
+			"navigator.targetFailReason",
+			targetFailReason,
+		)
+
+		if not targetOk:
+			edgeReason = self._getEdgeReason(
+				direction,
+				targetRow,
+				targetColumn,
+				nRows,
+				nColumns,
+			)
+			return _finishReturn(
+				self._edge(result, edgeReason, targetRow, targetColumn)
+			)
+
+		if not isinstance(targetRow, int) or not isinstance(targetColumn, int):
+			return _finishReturn(
+				self._fail(result, "computeTargetCell", targetFailReason)
+			)
+
+		return _finishReturn(
+			self.moveToCoordinate(
+				context,
+				targetRow,
+				targetColumn,
+				result,
+				allowSourceCell=False,
+				timing=timing,
+			)
+		)
 
 
 	def formatResultFields(self, prefix: str, result: dict[str, object]) -> list[str]:
@@ -2385,9 +4681,6 @@ class WriterIA2TableNavigator:
 			f"{prefix}apiFocusRowIndex={result.get('apiFocusRowIndex')!r}",
 			f"{prefix}apiFocusColumnIndex={result.get('apiFocusColumnIndex')!r}",
 		]
-
-
-
 
 def _normalizeWriterIA2SpeechText(text: object) -> str:
 	"""Normalize real Writer cell text for speech.
@@ -2507,21 +4800,26 @@ def _getWriterIA2TableContentSpeechText(result: dict[str, object]) -> str:
 
 	return ""
 
-
 def _getWriterIA2TableCellCoordsSpeechText(result: dict[str, object]) -> str:
 	"""Return Writer table cell coordinates from a move result."""
+	try:
+		import config
+		if not config.conf["documentFormatting"]["reportTableCellCoords"]:
+			return ""
+	except Exception:
+		pass
+
 	targetRow = result.get("targetRow")
 	targetColumn = result.get("targetColumn")
 
 	if isinstance(targetRow, int) and isinstance(targetColumn, int):
 		# Translators: fallback speech for a Writer table cell location.
-		return _("row {row}, column {column}").format(
-			row=targetRow + 1,
-			column=targetColumn + 1,
+		return "%s %s" % (
+			_("row %s") % (targetRow + 1),
+			_("column %s") % (targetColumn + 1),
 		)
 
 	return ""
-
 
 def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
 	"""Return speech text for a Writer IA2 table move result.
@@ -2539,12 +4837,11 @@ def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
 		return contentText
 
 	if coordinateText:
-		return coordinateText
+		# Translators: Reported when a Writer table cell has no text, followed by the cell coordinates.
+		return f"{_('blank')}, {coordinateText}"
 
-	# Translators: fallback speech when a Writer table cell has no text or coordinates.
-	return _("table cell")
-
-
+	# Translators: Reported when a Writer table cell has no text and table coordinates are not reported.
+	return _("blank")
 
 def moveAndReportWriterIA2TableCell(
 	direction: str,
