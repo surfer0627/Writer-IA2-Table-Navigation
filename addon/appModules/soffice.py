@@ -1,9 +1,13 @@
 import api
-import braille
 import config
+import speech
 import core
+import scriptHandler
 import textInfos
 import ui
+
+import builtins
+_nvdaCoreGettext = builtins._
 
 import addonHandler
 addonHandler.initTranslation()
@@ -14,8 +18,14 @@ from nvdaBuiltin.appModules import soffice as builtinSoffice
 _TABLE_SPEECH_ORDER = "contentThenCell"
 _TABLE_SPEECH_DELAY_MS = 200
 
+# Translators: command category for the add-on.
+SCRCAT_WRITER_IA2_TABLE = _("Writer IA2 Table Navigation")
+
 class AppModule(builtinSoffice.AppModule):
 	"""Minimal LibreOffice Writer alpha AppModule entry."""
+
+	_writerIA2TableTextInfoPatchEnabled = False
+	_writerTableBrailleCollapsedChunkPatchEnabled = True
 
 	def _syncWriterIA2TableAfterMove(self, result: dict[str, object]) -> dict[str, object]:
 		"""Synchronize NVDA focus, Symphony, speech, and braille after IA2 table movement."""
@@ -53,7 +63,7 @@ class AppModule(builtinSoffice.AppModule):
 		result: dict[str, object],
 		syncResult: dict[str, object] | None = None,
 	) -> dict[str, object]:
-		"""Sync target table cell with Symphony focus events, speech, and braille."""
+		"""Sync target table cell with Symphony focus and deferred speech."""
 		if syncResult is None:
 			syncResult = {
 				"attempted": True,
@@ -82,12 +92,13 @@ class AppModule(builtinSoffice.AppModule):
 				and treeInterceptor.__class__.__name__ == "SymphonyDocument"
 			)
 		except Exception:
-			treeInterceptor = None
+			syncResult["symphonyDocumentDetected"] = False
 
 		try:
 			api.setFocusObject(targetObj)
 			syncResult["focusSetOk"] = True
 		except Exception as e:
+			syncResult["focusSetOk"] = False
 			syncResult["failReason"] = f"api.setFocusObject failed: {e!r}"
 
 		syncResult["gainFocusQueued"] = False
@@ -96,25 +107,23 @@ class AppModule(builtinSoffice.AppModule):
 
 		try:
 			cellName = getattr(targetObj, "name", None) or ""
-
 			if not cellName:
 				try:
 					cellName = targetObj.IAccessibleObject.accName(0) or ""
 				except Exception:
 					cellName = ""
-
 			syncResult["speechOk"] = True
 			syncResult["speechMode"] = "deferredContentThenCell"
 			syncResult["cellSpeechName"] = str(cellName)
 		except Exception as e:
+			syncResult["speechOk"] = False
 			if not syncResult.get("failReason"):
 				syncResult["failReason"] = f"speech preparation failed: {e!r}"
 
-
+		# Native Symphony paragraph focus owns braille presentation.
 		syncResult["brailleGainFocusOk"] = False
 		syncResult["brailleGainFocusSkipped"] = True
 		syncResult["brailleGainFocusSkipReason"] = "waitForNaturalParagraphFocus"
-
 		syncResult["brailleCaretMoveOk"] = False
 		syncResult["brailleCaretMoveSkipped"] = True
 		syncResult["brailleCaretMoveSkipReason"] = "targetCellIsNotTextObject"
@@ -125,7 +134,7 @@ class AppModule(builtinSoffice.AppModule):
 			apiFocusRowIndex = None
 			apiFocusColumnIndex = None
 			if not apiFocusMatchesTarget:
-				navigator = WriterIA2TableNavigator()
+				navigator = self._getWriterIA2TableNavigator()
 				apiFocusContext = navigator.getContextFromObject(apiFocusObj)
 				apiFocusRowIndex = apiFocusContext.get("rowIndex")
 				apiFocusColumnIndex = apiFocusContext.get("columnIndex")
@@ -164,19 +173,18 @@ class AppModule(builtinSoffice.AppModule):
 			syncResult["delayedSpeechScheduled"] = True
 		except Exception as e:
 			syncResult["delayedSpeechScheduled"] = False
-			syncResult["delayedSpeechError"] = repr(e)
+			syncResult["failReason"] = repr(e)
 
 		return syncResult
 
-	def _getWriterIA2TableFocusedContentText(self, focusObj) -> str:
-		"""Return text from the naturally focused Symphony paragraph."""
-		if focusObj is None:
+	def _getWriterIA2TableObjectContentText(self, obj) -> str:
+		if obj is None:
 			return ""
 
 		contentText = ""
 
 		try:
-			value = getattr(focusObj, "value", None)
+			value = getattr(obj, "value", None)
 			if value:
 				contentText = str(value)
 		except Exception:
@@ -184,18 +192,62 @@ class AppModule(builtinSoffice.AppModule):
 
 		if not contentText:
 			try:
-				contentText = str(focusObj.IAccessibleObject.accValue(0) or "")
+				contentText = str(obj.IAccessibleObject.accValue(0) or "")
 			except Exception:
 				contentText = ""
 
 		if not contentText:
 			try:
-				ti = focusObj.makeTextInfo(textInfos.POSITION_ALL)
+				displayText = getattr(obj, "displayText", "") or ""
+				if displayText:
+					contentText = str(displayText)
+			except Exception:
+				contentText = ""
+
+		if not contentText:
+			try:
+				ti = obj.makeTextInfo(textInfos.POSITION_ALL)
 				contentText = getattr(ti, "text", "") or ""
 			except Exception:
 				contentText = ""
 
 		return contentText.strip()
+
+	def _getWriterIA2TableChildContentText(self, obj) -> str:
+		if obj is None:
+			return ""
+
+		try:
+			childCount = int(getattr(obj, "childCount", 0) or 0)
+		except Exception:
+			childCount = 0
+
+		if childCount <= 0:
+			return ""
+
+		parts = []
+		for index in range(childCount):
+			try:
+				child = obj.getChild(index)
+			except Exception:
+				child = None
+
+			if child is None:
+				continue
+
+			text = self._getWriterIA2TableObjectContentText(child)
+			if text:
+				parts.append(text)
+
+		return "\n".join(parts).strip()
+
+	def _getWriterIA2TableFocusedContentText(self, focusObj) -> str:
+		"""Return text from the focused Writer IA2 table object or its text children."""
+		text = self._getWriterIA2TableObjectContentText(focusObj)
+		if text:
+			return text
+
+		return self._getWriterIA2TableChildContentText(focusObj)
 
 	def _shouldReportWriterIA2TableCellCoords(self) -> bool:
 		"""Return whether NVDA is configured to report table cell coordinates."""
@@ -209,11 +261,6 @@ class AppModule(builtinSoffice.AppModule):
 		result: dict[str, object],
 	) -> str:
 		"""Return table cell coordinate speech using NVDA's native table coordinate strings."""
-		try:
-			import speech
-		except Exception:
-			return ""
-
 		targetRow = result.get("targetRow")
 		targetColumn = result.get("targetColumn")
 
@@ -237,32 +284,6 @@ class AppModule(builtinSoffice.AppModule):
 
 		return " ".join(item for item in sequence if isinstance(item, str)).strip()
 
-	def _getWriterIA2TableBrailleCoordsText(
-		self,
-		brailleProperties: dict[str, object],
-	) -> str:
-		"""Return NVDA core braille text for table-cell coordinates.
-
-		The caller is responsible for converting Writer IA2 table context into
-		NVDA-style row/column/span properties through WriterIA2TableNavigator.
-		This helper only delegates formatting to NVDA core.
-		"""
-		if not brailleProperties:
-			return ""
-
-		try:
-			import braille
-		except Exception:
-			return ""
-
-		getPropertiesBraille = getattr(braille, "getPropertiesBraille", None)
-		if not callable(getPropertiesBraille):
-			return ""
-
-		try:
-			return getPropertiesBraille(**brailleProperties)
-		except Exception:
-			return ""
 
 	def _formatWriterIA2TableSpeech(
 		self,
@@ -301,105 +322,7 @@ class AppModule(builtinSoffice.AppModule):
 		return contentText or coordinateText or fallbackText
 
 
-	def _getWriterIA2TableBraillePresentation(
-		self,
-		focusObj: object | None,
-		reportTableCellCoords: bool,
-		delayedResult: dict[str, object],
-	) -> str:
-		"""Return braille coordinate text through the Writer IA2 cell-info adapter."""
-		focusContext: dict[str, object] = {}
-		cellInfo: dict[str, object] = {}
-		brailleProperties: dict[str, object] = {}
-		brailleCoordsText = ""
 
-		try:
-			from .writerTableNavCore import WriterIA2TableNavigator
-		except Exception:
-			try:
-				from writerTableNavCore import WriterIA2TableNavigator
-			except Exception:
-				WriterIA2TableNavigator = None
-
-		if WriterIA2TableNavigator is None or focusObj is None:
-			delayedResult["brailleCoordsFailReason"] = (
-				"WriterIA2TableNavigatorUnavailableOrFocusMissing"
-			)
-			return ""
-
-		try:
-			navigator = WriterIA2TableNavigator()
-			focusContext = navigator.getContextFromObject(focusObj)
-
-			delayedResult["brailleContextInTable"] = focusContext.get("inTable")
-			delayedResult["brailleContextRowIndex"] = focusContext.get("rowIndex")
-			delayedResult["brailleContextColumnIndex"] = focusContext.get("columnIndex")
-			delayedResult["brailleContextRowSpan"] = focusContext.get("rowSpan")
-			delayedResult["brailleContextColumnSpan"] = focusContext.get("columnSpan")
-			delayedResult["brailleContextNRows"] = focusContext.get("nRows")
-			delayedResult["brailleContextNColumns"] = focusContext.get("nColumns")
-
-			cellInfo = navigator.normalizeCellInfo(
-				focusContext,
-				includeTableCellCoords=reportTableCellCoords,
-			)
-
-			delayedResult["brailleCellInfoInTable"] = cellInfo.get("inTable")
-			delayedResult["brailleCellInfoRowIndex"] = cellInfo.get("rowIndex")
-			delayedResult["brailleCellInfoColumnIndex"] = cellInfo.get("columnIndex")
-			delayedResult["brailleCellInfoRowSpan"] = cellInfo.get("rowSpan")
-			delayedResult["brailleCellInfoColumnSpan"] = cellInfo.get("columnSpan")
-			delayedResult["brailleCellInfoRowNumber"] = cellInfo.get("rowNumber")
-			delayedResult["brailleCellInfoColumnNumber"] = cellInfo.get("columnNumber")
-			delayedResult["brailleCellInfoRowEndNumber"] = cellInfo.get("rowEndNumber")
-			delayedResult["brailleCellInfoColumnEndNumber"] = cellInfo.get("columnEndNumber")
-			delayedResult["brailleCellInfoIncludeTableCellCoords"] = cellInfo.get(
-				"includeTableCellCoords",
-			)
-
-			brailleProperties = navigator.getBrailleProperties(cellInfo)
-
-			delayedResult["braillePropertiesExists"] = bool(brailleProperties)
-			delayedResult["braillePropertiesRowNumber"] = brailleProperties.get("rowNumber")
-			delayedResult["braillePropertiesColumnNumber"] = brailleProperties.get("columnNumber")
-			delayedResult["braillePropertiesRowSpan"] = brailleProperties.get("rowSpan")
-			delayedResult["braillePropertiesColumnSpan"] = brailleProperties.get("columnSpan")
-			delayedResult["braillePropertiesIncludeTableCellCoords"] = brailleProperties.get(
-				"includeTableCellCoords",
-			)
-
-			if reportTableCellCoords:
-				brailleCoordsText = self._getWriterIA2TableBrailleCoordsText(
-					brailleProperties,
-				)
-			else:
-				delayedResult["brailleCoordsSkippedReason"] = (
-					"reportTableCellCoordsDisabled"
-				)
-
-		except Exception as e:
-			delayedResult["brailleCoordsError"] = repr(e)
-
-		return brailleCoordsText
-
-	def _buildWriterIA2TableCombinedBrailleText(
-		self,
-		brailleCoordsText: str,
-		brailleContentText: str,
-		reportTableCellCoords: bool,
-	) -> str:
-		"""Return one combined braille message for table coordinates and content.
-
-		This is an interim bridge. NVDA's native table-cell braille should
-		eventually come from TextInfo/control-field properties. Until Writer
-		table-cell coordinates are exposed that way, keep coordinates and content
-		in one message so the coordinates are not overwritten by a later
-		content-only braille message.
-		"""
-		if reportTableCellCoords and brailleCoordsText and brailleContentText:
-			return f"{brailleCoordsText} {brailleContentText}"
-
-		return brailleContentText
 
 	def _finishWriterIA2TableSymphonySpeech(
 		self,
@@ -407,7 +330,7 @@ class AppModule(builtinSoffice.AppModule):
 		syncResult: dict[str, object],
 	) -> None:
 		"""Speak target cell content after natural Symphony paragraph focus settles."""
-		delayedResult = dict(syncResult)
+		delayedResult = dict(syncResult or {})
 		delayedResult["delayedSpeechRan"] = True
 
 		try:
@@ -417,7 +340,6 @@ class AppModule(builtinSoffice.AppModule):
 			delayedResult["afterFocusError"] = repr(e)
 
 		delayedResult["afterFocusExists"] = focusObj is not None
-
 		if focusObj is not None:
 			try:
 				delayedResult["afterFocusClass"] = focusObj.__class__.__name__
@@ -429,85 +351,64 @@ class AppModule(builtinSoffice.AppModule):
 
 		contentText = self._getWriterIA2TableFocusedContentText(focusObj)
 		cellName = str(syncResult.get("cellSpeechName") or "")
-
 		contentIsBlank = not contentText
 		if contentIsBlank:
-			contentText = _("blank")
+			contentText = _nvdaCoreGettext("blank")
 
 		delayedResult["afterFocusContentIsBlank"] = contentIsBlank
-
-		reportTableCellCoords = self._shouldReportWriterIA2TableCellCoords()
-		delayedResult["reportTableCellCoords"] = reportTableCellCoords
-
-		brailleCoordsText = self._getWriterIA2TableBraillePresentation(
-			focusObj=focusObj,
-			reportTableCellCoords=reportTableCellCoords,
-			delayedResult=delayedResult,
-		)
+		delayedResult["afterFocusContentText"] = contentText
+		delayedResult["cellSpeechName"] = cellName
+		delayedResult["reportTableCellCoords"] = self._shouldReportWriterIA2TableCellCoords()
 
 		speechText = self._formatWriterIA2TableSpeech(
 			contentText=contentText,
 			cellName=cellName,
 			result=result,
 		)
-
-		brailleContentText = contentText or speechText
-		brailleText = self._buildWriterIA2TableCombinedBrailleText(
-			brailleCoordsText=brailleCoordsText,
-			brailleContentText=brailleContentText,
-			reportTableCellCoords=reportTableCellCoords,
-		)
-
-		delayedResult["afterFocusContentText"] = contentText
-		delayedResult["cellSpeechName"] = cellName
 		delayedResult["speechText"] = speechText
 		delayedResult["speechOrder"] = _TABLE_SPEECH_ORDER
-		delayedResult["brailleCoordsText"] = brailleCoordsText
-		delayedResult["brailleContentText"] = brailleContentText
-		delayedResult["brailleText"] = brailleText
-		delayedResult["brailleOrder"] = "coordsThenContentCombined"
 
 		try:
-			ui.message(speechText)
+			speech.speakMessage(speechText)
 			delayedResult["delayedSpeechOk"] = True
 		except Exception as e:
 			delayedResult["delayedSpeechOk"] = False
 			delayedResult["delayedSpeechError"] = repr(e)
 
 		try:
-			handler = getattr(braille, "handler", None)
-			message = getattr(handler, "message", None) if handler is not None else None
-
-			if callable(message) and brailleText:
-				message(brailleText)
-				delayedResult["brailleMessageOk"] = True
-			else:
-				delayedResult["brailleMessageOk"] = False
-				delayedResult["brailleMessageFailReason"] = "brailleHandlerMessageNotAvailable"
-		except Exception as e:
-			delayedResult["brailleMessageOk"] = False
-			delayedResult["brailleMessageError"] = repr(e)
-
-		try:
-			handler = getattr(braille, "handler", None)
-			buffer = getattr(handler, "buffer", None) if handler is not None else None
-			delayedResult["brailleBufferExistsAfterDelay"] = buffer is not None
-			delayedResult["brailleRawTextAfterDelay"] = (
-				getattr(buffer, "rawText", "")
-				if buffer is not None else ""
-			)
-		except Exception as e:
-			delayedResult["brailleAfterDelayError"] = repr(e)
-
-		try:
 			self._lastWriterIA2TableSymphonyDelayedSpeechResult = delayedResult
 		except Exception:
 			pass
 
+
+
+	def _getWriterIA2TableNavigator(self) -> WriterIA2TableNavigator:
+		"""Return the persistent Writer IA2 table navigator for this AppModule."""
+		navigator = getattr(
+			self,
+			"_writerIA2TableNavigator",
+			None,
+		)
+
+		if navigator is None:
+			navigator = WriterIA2TableNavigator()
+			self._writerIA2TableNavigator = navigator
+
+		return navigator
+
+
 	def _moveWriterIA2TableCell(self, direction: str) -> None:
 		"""Move to a nearby Writer table cell through IA2."""
-		navigator = WriterIA2TableNavigator()
-		result = navigator.move(api.getFocusObject(), direction)
+		try:
+			beforeFocus = api.getFocusObject()
+		except Exception:
+			beforeFocus = None
+
+		navigator = self._getWriterIA2TableNavigator()
+		result = navigator.move(
+			beforeFocus,
+			direction,
+		)
 
 		if result.get("moved"):
 			self._syncWriterIA2TableAfterMove(result)
@@ -521,9 +422,7 @@ class AppModule(builtinSoffice.AppModule):
 				"failStage": result.get("failStage", ""),
 				"failReason": result.get("failReason", ""),
 			}
-			# Translators: Reported when a table navigation command cannot move further
-			# because the cursor is at the edge of the table.
-			ui.message(_("Edge of table"))
+			ui.message(_nvdaCoreGettext("Edge of table"))
 			return
 
 		self._lastWriterIA2TableSyncResult = {
@@ -536,28 +435,647 @@ class AppModule(builtinSoffice.AppModule):
 		# but the cursor is not inside a table cell.
 		ui.message(_("Not in a table cell"))
 
+	def _moveWriterIA2TableBoundary(
+		self,
+		movement: str,
+		axis: str,
+	) -> None:
+		"""Move to the first or last Writer table cell on the requested axis."""
+		navigator = self._getWriterIA2TableNavigator()
+		result = navigator.moveToBoundary(
+			api.getFocusObject(),
+			movement,
+			axis,
+		)
+
+		if result.get("moved"):
+			self._syncWriterIA2TableAfterMove(result)
+			return
+
+		if result.get("edge"):
+			self._lastWriterIA2TableSyncResult = {
+				"ok": False,
+				"edge": True,
+				"edgeReason": result.get("edgeReason", ""),
+				"failStage": result.get("failStage", ""),
+				"failReason": result.get("failReason", ""),
+			}
+			ui.message(
+				_nvdaCoreGettext("Edge of table")
+			)
+			return
+
+		self._lastWriterIA2TableSyncResult = {
+			"ok": False,
+			"edge": False,
+			"failStage": result.get("failStage", ""),
+			"failReason": result.get("failReason", ""),
+		}
+		# Translators: Reported when a table navigation command is used
+		# but the cursor is not inside a table cell.
+		ui.message(_("Not in a table cell"))
+
+	def _ensureWriterIA2TableTextInfoPatchForFocus(
+		self,
+		focusObj: object | None = None,
+		enabled: bool | None = None,
+	) -> dict[str, object]:
+		"""Lazy-install the Writer IA2 table TextInfo patch for the focused object.
+
+		This is the mainline call-site helper. With the feature flag left off, the
+		patch can be installed and exercised without injecting table ControlFields.
+		"""
+		result = {
+			"called": True,
+			"ok": False,
+			"canProceed": False,
+			"enabled": False,
+			"focusObjExists": False,
+			"focusObjClass": "",
+			"focusObjModule": "",
+			"textInfoMakeOk": False,
+			"textInfoClass": "",
+			"installed": False,
+			"alreadyInstalled": False,
+			"failReason": "",
+		}
+
+		if enabled is None:
+			enabled = bool(getattr(self, "_writerIA2TableTextInfoPatchEnabled", False))
+		result["enabled"] = bool(enabled)
+
+		if focusObj is None:
+			try:
+				focusObj = api.getFocusObject()
+			except Exception as e:
+				result["failReason"] = "getFocusObjectException:%r" % e
+				return result
+
+		result["focusObjExists"] = focusObj is not None
+		if focusObj is None:
+			result["failReason"] = "focusObjMissing"
+			return result
+
+		try:
+			result["focusObjClass"] = focusObj.__class__.__name__
+			result["focusObjModule"] = focusObj.__class__.__module__
+		except Exception:
+			pass
+
+		try:
+			makeTextInfo = getattr(focusObj, "makeTextInfo", None)
+			if not callable(makeTextInfo):
+				result["failReason"] = "makeTextInfoMissing"
+				return result
+
+			textInfo = makeTextInfo(textInfos.POSITION_ALL)
+			result["textInfoMakeOk"] = textInfo is not None
+			if textInfo is None:
+				result["failReason"] = "textInfoMissing"
+				return result
+
+			result["textInfoClass"] = textInfo.__class__.__name__
+		except Exception as e:
+			result["failReason"] = "makeTextInfoException:%r" % e
+			return result
+
+		installResult = self._lazyInstallWriterIA2TableTextInfoPatchManagerForTextInfo(
+			textInfo,
+			enabled=enabled,
+		)
+		result.update({
+			"ok": bool(installResult.get("ok")),
+			"alreadyInstalled": bool(installResult.get("alreadyInstalled", False)),
+			"installed": bool(installResult.get("installed", False)),
+			"enabled": bool(installResult.get("enabled", False)),
+			"failReason": installResult.get("failReason", ""),
+		})
+		result["canProceed"] = bool(
+			result.get("textInfoMakeOk")
+			and result.get("installed")
+			and not result.get("failReason")
+		)
+		return result
+
+	def _getWriterTableBrailleCollapsedChunkPatchManager(self):
+		manager = getattr(
+			self,
+			"_writerTableBrailleCollapsedChunkPatchManager",
+			None,
+		)
+
+		if manager is not None:
+			return manager
+
+		from .writerTableBrailleCollapsedChunkPatch import (
+			WriterTableBrailleCollapsedChunkPatchManager,
+		)
+
+		manager = (
+			WriterTableBrailleCollapsedChunkPatchManager()
+		)
+
+		self._writerTableBrailleCollapsedChunkPatchManager = (
+			manager
+		)
+
+		return manager
+
+	def _ensureWriterTableBrailleCollapsedChunkPatch(
+		self,
+	) -> dict[str, object]:
+		enabled = bool(
+			getattr(
+				self,
+				"_writerTableBrailleCollapsedChunkPatchEnabled",
+				False,
+			)
+		)
+
+		if not enabled:
+			return {
+				"ok": True,
+				"installed": False,
+				"enabled": False,
+				"failReason": "",
+			}
+
+		manager = (
+			self._getWriterTableBrailleCollapsedChunkPatchManager()
+		)
+
+		manager.setEnabled(True)
+
+		result = manager.install()
+
+		return {
+			"ok": bool(result.get("ok")),
+			"installed": bool(
+				result.get("installed")
+			),
+			"alreadyInstalled": bool(
+				result.get(
+					"alreadyInstalled",
+					False,
+				)
+			),
+			"enabled": manager.isEnabled(),
+			"failReason": result.get(
+				"failReason",
+				"",
+			),
+		}
+
+	def _restoreWriterTableBrailleCollapsedChunkPatchManager(
+		self,
+	) -> dict[str, object]:
+		manager = getattr(
+			self,
+			"_writerTableBrailleCollapsedChunkPatchManager",
+			None,
+		)
+
+		if manager is None:
+			return {
+				"ok": True,
+				"alreadyRestored": True,
+				"released": True,
+				"failReason": "",
+			}
+
+		result = manager.restore()
+
+		if not result.get("ok"):
+			return {
+				"ok": False,
+				"alreadyRestored": False,
+				"released": False,
+				"failReason": result.get(
+					"failReason",
+					"",
+				),
+			}
+
+		try:
+			del self._writerTableBrailleCollapsedChunkPatchManager
+			released = not hasattr(
+				self,
+				"_writerTableBrailleCollapsedChunkPatchManager",
+			)
+		except Exception:
+			released = False
+
+		return {
+			"ok": True,
+			"alreadyRestored": bool(
+				result.get(
+					"alreadyRestored",
+					False,
+				)
+			),
+			"released": released,
+			"failReason": "",
+		}
+
+	def event_gainFocus(self, obj, nextHandler):
+		"""Install Writer-specific lazy patches before native focus handling."""
+		try:
+			self._lastWriterIA2TableTextInfoPatchMainlineCallSiteResult = (
+				self._ensureWriterIA2TableTextInfoPatchForFocus(obj)
+			)
+		except Exception as e:
+			self._lastWriterIA2TableTextInfoPatchMainlineCallSiteResult = {
+				"called": True,
+				"ok": False,
+				"canProceed": False,
+				"failReason": "mainlineCallSiteException:%r" % e,
+			}
+
+		try:
+			self._lastWriterTableBrailleCollapsedChunkPatchResult = (
+				self._ensureWriterTableBrailleCollapsedChunkPatch()
+			)
+		except Exception as e:
+			self._lastWriterTableBrailleCollapsedChunkPatchResult = {
+				"ok": False,
+				"installed": False,
+				"enabled": False,
+				"failReason": "mainlineCallSiteException:%r" % e,
+			}
+
+		finally:
+			if callable(nextHandler):
+				nextHandler()
+
+	def _getWriterIA2TableTextInfoPatchManager(self):
+		manager = getattr(self, "_writerIA2TableTextInfoPatchManager", None)
+		if manager is not None:
+			return manager
+
+		try:
+			from .writerIA2TableTextInfoPatch import WriterIA2TableTextInfoPatchManager
+		except Exception:
+			try:
+				from appModules.writerIA2TableTextInfoPatch import WriterIA2TableTextInfoPatchManager
+			except Exception:
+				from writerIA2TableTextInfoPatch import WriterIA2TableTextInfoPatchManager
+
+		manager = WriterIA2TableTextInfoPatchManager()
+		manager.setEnabled(False)
+		self._writerIA2TableTextInfoPatchManager = manager
+		return manager
+
+	def _installWriterIA2TableTextInfoPatchManagerForTextInfoClass(
+		self,
+		textInfoClass,
+		enabled=None,
+	) -> dict[str, object]:
+		"""Install the Writer IA2 table TextInfo patch through AppModule lifecycle.
+
+		By default the feature flag is off. Installing the patch should not
+		inject table fields until the flag is explicitly enabled.
+		"""
+		manager = self._getWriterIA2TableTextInfoPatchManager()
+
+		if enabled is None:
+			enabled = bool(getattr(self, "_writerIA2TableTextInfoPatchEnabled", False))
+
+		manager.setEnabled(enabled)
+		result = manager.installForTextInfoClass(textInfoClass)
+
+		if result.get("failReason") == "patchAlreadyInstalledForDifferentTextInfoClass":
+			restoreResult = manager.restore()
+			if restoreResult.get("ok"):
+				result = manager.installForTextInfoClass(textInfoClass)
+			else:
+				return {
+					"ok": False,
+					"alreadyInstalled": False,
+					"installed": manager.isInstalled(),
+					"enabled": manager.isEnabled(),
+					"failReason": "restoreBeforeReinstallFailed:%s"
+					% restoreResult.get("failReason", ""),
+				}
+
+		return {
+			"ok": bool(result.get("ok")),
+			"alreadyInstalled": bool(result.get("alreadyInstalled", False)),
+			"installed": manager.isInstalled(),
+			"enabled": manager.isEnabled(),
+			"failReason": result.get("failReason", ""),
+		}
+
+	def _lazyInstallWriterIA2TableTextInfoPatchManagerForTextInfo(self, textInfo, enabled=None) -> dict[str, object]:
+		"""Install the Writer IA2 table TextInfo patch only after a TextInfo exists.
+
+		This keeps import/init paths inert. The default feature flag remains off
+		unless enabled=True is explicitly passed or an AppModule flag enables it.
+		"""
+		if textInfo is None:
+			return {
+				"ok": False,
+				"alreadyInstalled": False,
+				"installed": False,
+				"enabled": False,
+				"textInfoClass": "",
+				"failReason": "textInfoMissing",
+			}
+
+		textInfoClass = textInfo.__class__
+		result = self._installWriterIA2TableTextInfoPatchManagerForTextInfoClass(
+			textInfoClass,
+			enabled=enabled,
+		)
+
+		return {
+			"ok": bool(result.get("ok")),
+			"alreadyInstalled": bool(result.get("alreadyInstalled", False)),
+			"installed": bool(result.get("installed", False)),
+			"enabled": bool(result.get("enabled", False)),
+			"textInfoClass": textInfoClass.__name__,
+			"failReason": result.get("failReason", ""),
+		}
+
+	def _restoreWriterIA2TableTextInfoPatchManager(self) -> dict[str, object]:
+		"""Restore and release the Writer IA2 table TextInfo patch manager.
+
+		This helper is safe to call more than once. AppModule.terminate() uses it
+		so the TextInfo class patch does not survive reload.
+		"""
+		manager = getattr(self, "_writerIA2TableTextInfoPatchManager", None)
+		if manager is None:
+			return {
+				"ok": True,
+				"alreadyRestored": True,
+				"released": True,
+				"failReason": "",
+			}
+
+		try:
+			result = manager.restore()
+		except Exception as e:
+			return {
+				"ok": False,
+				"alreadyRestored": False,
+				"released": False,
+				"failReason": "restoreException:%r" % e,
+			}
+
+		try:
+			del self._writerIA2TableTextInfoPatchManager
+			released = not hasattr(self, "_writerIA2TableTextInfoPatchManager")
+		except Exception:
+			released = False
+
+		return {
+			"ok": bool(result.get("ok")),
+			"alreadyRestored": bool(result.get("alreadyRestored", False)),
+			"released": released,
+			"failReason": result.get("failReason", ""),
+		}
+
+	def terminate(self):
+		"""Restore Writer-specific patches before AppModule shutdown."""
+		try:
+			textInfoRestoreResult = (
+				self._restoreWriterIA2TableTextInfoPatchManager()
+			)
+
+			if not textInfoRestoreResult.get("ok"):
+				try:
+					from logHandler import log
+
+					log.debugWarning(
+						"Failed to restore Writer IA2 table TextInfo patch manager: %s"
+						% textInfoRestoreResult.get(
+							"failReason",
+							"",
+						)
+					)
+				except Exception:
+					pass
+
+		finally:
+			try:
+				brailleRestoreResult = (
+					self._restoreWriterTableBrailleCollapsedChunkPatchManager()
+				)
+
+				if not brailleRestoreResult.get("ok"):
+					try:
+						from logHandler import log
+
+						log.debugWarning(
+							"Failed to restore Writer table braille collapsed chunk patch: %s"
+							% brailleRestoreResult.get(
+								"failReason",
+								"",
+							)
+						)
+					except Exception:
+						pass
+
+			finally:
+				try:
+					super().terminate()
+				except AttributeError:
+					pass
+
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the previous row in a Writer table.
+		description=_nvdaCoreGettext("moves to the previous table row"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+upArrow",
+	)
 	def script_writerIA2TableMoveUp(self, gesture) -> None:
-		"""Move to the Writer table cell above."""
 		self._moveWriterIA2TableCell("up")
 
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the next row in a Writer table.
+		description=_nvdaCoreGettext("moves to the next table row"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+downArrow",
+	)
 	def script_writerIA2TableMoveDown(self, gesture) -> None:
-		"""Move to the Writer table cell below."""
 		self._moveWriterIA2TableCell("down")
 
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the previous column in a Writer table.
+		description=_nvdaCoreGettext("moves to the previous table column"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+leftArrow",
+	)
 	def script_writerIA2TableMoveLeft(self, gesture) -> None:
-		"""Move to the previous Writer table cell."""
 		self._moveWriterIA2TableCell("left")
 
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the next column in a Writer table.
+		description=_nvdaCoreGettext("moves to the next table column"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+rightArrow",
+	)
 	def script_writerIA2TableMoveRight(self, gesture) -> None:
-		"""Move to the next Writer table cell."""
 		self._moveWriterIA2TableCell("right")
+
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the first row in a Writer table.
+		description=_nvdaCoreGettext("moves to the first table row"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+pageUp",
+	)
+	def script_writerIA2TableFirstRow(self, gesture) -> None:
+		self._moveWriterIA2TableBoundary(
+			"first",
+			"row",
+		)
+
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the last row in a Writer table.
+		description=_nvdaCoreGettext("moves to the last table row"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+pageDown",
+	)
+	def script_writerIA2TableLastRow(self, gesture) -> None:
+		self._moveWriterIA2TableBoundary(
+			"last",
+			"row",
+		)
+
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the first column in a Writer table.
+		description=_nvdaCoreGettext("moves to the first table column"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+home",
+	)
+	def script_writerIA2TableFirstColumn(self, gesture) -> None:
+		self._moveWriterIA2TableBoundary(
+			"first",
+			"column",
+		)
+
+	@scriptHandler.script(
+		# Translators: Input help mode message for moving to the last column in a Writer table.
+		description=_nvdaCoreGettext("moves to the last table column"),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:control+alt+end",
+	)
+	def script_writerIA2TableLastColumn(self, gesture) -> None:
+		self._moveWriterIA2TableBoundary(
+			"last",
+			"column",
+		)
+
+	@scriptHandler.script(
+		description=_nvdaCoreGettext(
+			"Reads the row horizontally from the current cell rightwards to the last cell in the row.",
+		),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:NVDA+control+alt+downArrow",
+		speakOnDemand=True,
+	)
+	def script_sayAllWriterTableRow(self, gesture):
+		import ui
+		import api
+		from .writerIA2TableSayAll import WriterIA2TableSayAllHandler
+
+		result = WriterIA2TableSayAllHandler(updateCaret=True).sayAllRow(
+			api.getFocusObject()
+		)
+
+		if result.get("ok"):
+			return
+
+		message = result.get("message") or "Unable to read row"
+		if message == "Not in a table cell":
+			ui.message(_("Not in a table cell"))
+			return
+
+		ui.message(message)
+
+	@scriptHandler.script(
+		description=_nvdaCoreGettext(
+			"Reads the column vertically from the current cell downwards to the last cell in the column.",
+		),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:NVDA+control+alt+rightArrow",
+		speakOnDemand=True,
+	)
+	def script_sayAllWriterTableColumn(self, gesture):
+		import ui
+		import api
+		from .writerIA2TableSayAll import WriterIA2TableSayAllHandler
+
+		result = WriterIA2TableSayAllHandler(updateCaret=True).sayAllColumn(
+			api.getFocusObject()
+		)
+
+		if result.get("ok"):
+			return
+
+		message = result.get("message") or "Unable to read column"
+		if message == "Not in a table cell":
+			ui.message(_("Not in a table cell"))
+			return
+
+		ui.message(message)
+
+	@scriptHandler.script(
+		description=_nvdaCoreGettext(
+			"Reads the current row horizontally from left to right without moving the system caret.",
+		),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:NVDA+control+alt+leftArrow",
+		speakOnDemand=True,
+	)
+	def script_readCurrentWriterTableRow(self, gesture):
+		import ui
+		from .writerIA2TableCommands import WriterIA2TableCommandHandler
+
+		result = WriterIA2TableCommandHandler().readCurrentRow(api.getFocusObject())
+
+		if not result.get("ok"):
+			message = result.get("message", "")
+			if message == "Not in a table cell":
+				# Translators: The message reported when a user attempts to use a table movement command
+				# when the cursor is not within a table.
+				ui.message(_("Not in a table cell"))
+				return
+
+			ui.message(message or "Unable to read row")
+			return
+
+		ui.message(result.get("message", ""))
+
+	@scriptHandler.script(
+		description=_nvdaCoreGettext(
+			"Reads the current column vertically from top to bottom without moving the system caret.",
+		),
+		category=SCRCAT_WRITER_IA2_TABLE,
+		gesture="kb:NVDA+control+alt+upArrow",
+		speakOnDemand=True,
+	)
+	def script_readCurrentWriterTableColumn(self, gesture):
+		import ui
+		from .writerIA2TableCommands import WriterIA2TableCommandHandler
+
+		result = WriterIA2TableCommandHandler().readCurrentColumn(api.getFocusObject())
+
+		if not result.get("ok"):
+			message = result.get("message", "")
+			if message == "Not in a table cell":
+				# Translators: The message reported when a user attempts to use a table movement command
+				# when the cursor is not within a table.
+				ui.message(_("Not in a table cell"))
+				return
+
+			ui.message(message or "Unable to read column")
+			return
+
+		ui.message(result.get("message", ""))
 
 
 
 	__gestures = {
-		"kb:control+alt+upArrow": "writerIA2TableMoveUp",
-		"kb:control+alt+downArrow": "writerIA2TableMoveDown",
-		"kb:control+alt+leftArrow": "writerIA2TableMoveLeft",
-		"kb:control+alt+rightArrow": "writerIA2TableMoveRight",
+		"kb:control+alt+r": "sayAllWriterTableRow",
+		"kb:control+alt+c": "sayAllWriterTableColumn",
 	}
-
