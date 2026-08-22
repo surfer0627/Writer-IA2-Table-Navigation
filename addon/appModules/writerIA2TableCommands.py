@@ -13,8 +13,6 @@ The app module script layer is responsible for presentation.
 
 from __future__ import annotations
 
-from typing import Any
-
 
 class WriterIA2TableCommandHandler:
 	"""Build command-level results for Writer IA2 table row / column reading."""
@@ -160,14 +158,11 @@ class WriterIA2TableCommandHandler:
 			"command": command,
 			"failStage": "",
 			"failReason": "",
-
 			"message": "",
 			"messageLength": 0,
-
 			"tableContextMakeOk": False,
 			"tableContextFailStage": "",
 			"tableContextFailReason": "",
-
 			"tableID": "",
 			"tableIDExists": False,
 			"rowNumber": None,
@@ -178,12 +173,10 @@ class WriterIA2TableCommandHandler:
 			"columnEndNumber": None,
 			"nRows": None,
 			"nColumns": None,
-
 			"sequenceResultOk": False,
 			"sequenceFailStage": "",
 			"sequenceFailReason": "",
 			"partial": False,
-
 			"cellCount": 0,
 			"expectedCellCount": None,
 			"texts": [],

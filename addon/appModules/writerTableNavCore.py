@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 import api
-import ui
 import controlTypes
 
 
@@ -142,23 +141,27 @@ class WriterTableContextResolver:
 	def getRowColumn(self, cellObj: object | None) -> tuple[int | None, int | None]:
 		"""Return row and column numbers from a Writer table cell."""
 		rowNumber = self._coerceInt(
-			self._safeGet(cellObj, "rowNumber", None)
+			self._safeGet(cellObj, "rowNumber", None),
 		)
 		columnNumber = self._coerceInt(
-			self._safeGet(cellObj, "columnNumber", None)
+			self._safeGet(cellObj, "columnNumber", None),
 		)
 
 		return rowNumber, columnNumber
 
-	def getTableSize(self, tableObj: object | None, cellObj: object | None = None) -> tuple[int | None, int | None, str, bool]:
+	def getTableSize(
+		self,
+		tableObj: object | None,
+		cellObj: object | None = None,
+	) -> tuple[int | None, int | None, str, bool]:
 		"""Return table row count, column count, source, and confidence."""
 		sourceParts: list[str] = []
 
 		rowCount = self._coerceInt(
-			self._safeGet(tableObj, "rowCount", None)
+			self._safeGet(tableObj, "rowCount", None),
 		)
 		columnCount = self._coerceInt(
-			self._safeGet(tableObj, "columnCount", None)
+			self._safeGet(tableObj, "columnCount", None),
 		)
 
 		rowCountKnown = rowCount is not None
@@ -177,7 +180,7 @@ class WriterTableContextResolver:
 				if rowCount is None:
 					for name in ("nRows", "rowCount"):
 						rowCount = self._coerceInt(
-							self._safeGet(ia2Table, name, None)
+							self._safeGet(ia2Table, name, None),
 						)
 						if rowCount is not None:
 							rowCountKnown = True
@@ -187,7 +190,7 @@ class WriterTableContextResolver:
 				if columnCount is None:
 					for name in ("nColumns", "columnCount"):
 						columnCount = self._coerceInt(
-							self._safeGet(ia2Table, name, None)
+							self._safeGet(ia2Table, name, None),
 						)
 						if columnCount is not None:
 							columnCountKnown = True
@@ -296,6 +299,7 @@ class WriterTableContextResolver:
 
 		return lines
 
+
 class WriterTableTextInfoRegionFieldBridge:
 	"""Build NVDA table control fields for TextInfoRegion.
 
@@ -371,7 +375,7 @@ class WriterTableTextInfoRegionFieldBridge:
 				"table-rowcount": rowCount,
 				"table-columncount": columnCount,
 				"_startOfNode": True,
-			}
+			},
 		)
 
 	def buildTableCellControlField(
@@ -416,7 +420,7 @@ class WriterTableTextInfoRegionFieldBridge:
 				"columnSpan": columnSpan,
 				"includeTableCellCoords": includeTableCellCoords,
 				"_startOfNode": True,
-			}
+			},
 		)
 
 	def buildFieldSequence(
@@ -490,7 +494,7 @@ class WriterTableTextInfoRegionFieldBridge:
 				and getattr(fieldSequence[3], "command", None) == "controlEnd"
 				and fieldSequence[3].field.get("role") == controlTypes.Role.TABLECELL
 				and getattr(fieldSequence[4], "command", None) == "controlEnd"
-				and fieldSequence[4].field.get("role") == controlTypes.Role.TABLE
+				and fieldSequence[4].field.get("role") == controlTypes.Role.TABLE,
 			)
 			result["ok"] = bool(result["fieldSequenceShapeOk"])
 			if not result["ok"]:
@@ -824,10 +828,7 @@ class WriterIA2TableNavigator:
 		elif direction == "right":
 			targetColumn = columnIndex + columnSpan
 
-		inBounds = (
-			0 <= targetRow < nRows
-			and 0 <= targetColumn < nColumns
-		)
+		inBounds = 0 <= targetRow < nRows and 0 <= targetColumn < nColumns
 
 		if not inBounds:
 			return False, targetRow, targetColumn, "targetOutOfBounds"
@@ -864,11 +865,7 @@ class WriterIA2TableNavigator:
 		except Exception:
 			columnSpan = 1
 
-		return (
-			rowIndex <= row < rowIndex + rowSpan
-			and columnIndex <= column < columnIndex + columnSpan
-		)
-
+		return rowIndex <= row < rowIndex + rowSpan and columnIndex <= column < columnIndex + columnSpan
 
 	def _getContextSpanArea(self, context: dict[str, object] | None) -> int:
 		if not context:
@@ -944,7 +941,6 @@ class WriterIA2TableNavigator:
 			id(tableObj),
 		)
 
-
 	def _getDirectCellCoordinateCacheState(
 		self,
 	) -> dict[str, object]:
@@ -969,7 +965,6 @@ class WriterIA2TableNavigator:
 
 		return cache
 
-
 	def _clearDirectCellCoordinateCache(self) -> None:
 		"""Discard the current 1i direct-cell coordinate cache."""
 		self._directCellCoordinateCache = {
@@ -981,7 +976,6 @@ class WriterIA2TableNavigator:
 			"coordinateCount": 0,
 			"candidateEntryCount": 0,
 		}
-
 
 	def _buildDirectCellCoordinateCache(
 		self,
@@ -1008,7 +1002,7 @@ class WriterIA2TableNavigator:
 		)
 		try:
 			directChildren = list(
-				getattr(tableObj, "children", None) or []
+				getattr(tableObj, "children", None) or [],
 			)
 		except Exception:
 			directChildren = []
@@ -1051,9 +1045,7 @@ class WriterIA2TableNavigator:
 				context = None
 			contextEnd = time.perf_counter()
 
-			directContextTotalMs += (
-				contextEnd - contextStart
-			) * 1000
+			directContextTotalMs += (contextEnd - contextStart) * 1000
 
 			if not isinstance(context, dict):
 				continue
@@ -1066,18 +1058,13 @@ class WriterIA2TableNavigator:
 			rowIndex = context.get("rowIndex")
 			columnIndex = context.get("columnIndex")
 
-			if (
-				not isinstance(rowIndex, int)
-				or not isinstance(columnIndex, int)
-			):
+			if not isinstance(rowIndex, int) or not isinstance(columnIndex, int):
 				continue
 
 			candidateObj = context.get("cellObj") or child
 			candidateObjIdentity = id(candidateObj)
 
-			contextByObjectIdentity[
-				candidateObjIdentity
-			] = context
+			contextByObjectIdentity[candidateObjIdentity] = context
 
 			if candidateObjIdentity in candidateObjectsSeen:
 				continue
@@ -1120,14 +1107,7 @@ class WriterIA2TableNavigator:
 					columnIndex,
 					columnEnd,
 				):
-					exactStartPenalty = (
-						0
-						if (
-							coveredRow == rowIndex
-							and coveredColumn == columnIndex
-						)
-						else 1
-					)
+					exactStartPenalty = 0 if (coveredRow == rowIndex and coveredColumn == columnIndex) else 1
 
 					coordinateMap.setdefault(
 						(
@@ -1135,13 +1115,15 @@ class WriterIA2TableNavigator:
 							coveredColumn,
 						),
 						[],
-					).append((
-						exactStartPenalty,
-						spanArea,
-						childScanOrder,
-						candidateObj,
-						context,
-					))
+					).append(
+						(
+							exactStartPenalty,
+							spanArea,
+							childScanOrder,
+							candidateObj,
+							context,
+						),
+					)
 
 		for candidates in coordinateMap.values():
 			candidates.sort(
@@ -1149,7 +1131,7 @@ class WriterIA2TableNavigator:
 					item[0],
 					item[1],
 					item[2],
-				)
+				),
 			)
 
 		self._markMoveTimingProbe1c(
@@ -1157,10 +1139,7 @@ class WriterIA2TableNavigator:
 			"descendantAfterDirectScanPerf",
 		)
 
-		candidateEntryCount = sum(
-			len(candidates)
-			for candidates in coordinateMap.values()
-		)
+		candidateEntryCount = sum(len(candidates) for candidates in coordinateMap.values())
 
 		cache: dict[str, object] = {
 			"built": True,
@@ -1184,7 +1163,6 @@ class WriterIA2TableNavigator:
 		)
 
 		return cache
-
 
 	def _lookupDirectCellCoordinateCache(
 		self,
@@ -1221,37 +1199,28 @@ class WriterIA2TableNavigator:
 		for candidate in candidates:
 			candidateObj = candidate[3]
 
-			if (
-				excludeCellObj is not None
-				and self._isSameCellObject(
-					candidateObj,
-					excludeCellObj,
-				)
+			if excludeCellObj is not None and self._isSameCellObject(
+				candidateObj,
+				excludeCellObj,
 			):
-				descendantLookupDebug[
-					"skippedExcludedCellCount"
-				] = (
+				descendantLookupDebug["skippedExcludedCellCount"] = (
 					int(
 						descendantLookupDebug.get(
 							"skippedExcludedCellCount",
 						)
-						or 0
+						or 0,
 					)
 					+ 1
 				)
 
 				try:
-					descendantLookupDebug[
-						"skippedExcludedCellDescription"
-					] = getattr(
+					descendantLookupDebug["skippedExcludedCellDescription"] = getattr(
 						candidateObj,
 						"description",
 						None,
 					)
 				except Exception:
-					descendantLookupDebug[
-						"skippedExcludedCellDescription"
-					] = None
+					descendantLookupDebug["skippedExcludedCellDescription"] = None
 
 				continue
 
@@ -1265,7 +1234,7 @@ class WriterIA2TableNavigator:
 			)
 			try:
 				currentContext = self.getContextFromObject(
-					candidateObj
+					candidateObj,
 				)
 			except Exception:
 				currentContext = None
@@ -1292,32 +1261,22 @@ class WriterIA2TableNavigator:
 				True,
 			)
 
-			descendantLookupDebug[
-				"candidateCount"
-			] = acceptedCandidateCount
+			descendantLookupDebug["candidateCount"] = acceptedCandidateCount
 
 			try:
-				descendantLookupDebug[
-					"selectedDescription"
-				] = getattr(
+				descendantLookupDebug["selectedDescription"] = getattr(
 					candidateObj,
 					"description",
 					None,
 				)
 			except Exception:
-				descendantLookupDebug[
-					"selectedDescription"
-				] = None
+				descendantLookupDebug["selectedDescription"] = None
 
-			descendantLookupDebug[
-				"selectedSameAsExclude"
-			] = False
+			descendantLookupDebug["selectedSameAsExclude"] = False
 
 			return "hit", candidateObj
 
-		descendantLookupDebug[
-			"candidateCount"
-		] = 0
+		descendantLookupDebug["candidateCount"] = 0
 
 		return "miss", None
 
@@ -1403,21 +1362,15 @@ class WriterIA2TableNavigator:
 
 		if excludeCellObj is not None:
 			try:
-				descendantLookupDebug[
-					"excludeCellObjDescription"
-				] = getattr(
+				descendantLookupDebug["excludeCellObjDescription"] = getattr(
 					excludeCellObj,
 					"description",
 					None,
 				)
 			except Exception:
-				descendantLookupDebug[
-					"excludeCellObjDescription"
-				] = None
+				descendantLookupDebug["excludeCellObjDescription"] = None
 
-		self._lastDescendantCellLookupDebug = (
-			descendantLookupDebug
-		)
+		self._lastDescendantCellLookupDebug = descendantLookupDebug
 
 		self._setMoveTimingProbe1cValue(
 			timing,
@@ -1431,9 +1384,7 @@ class WriterIA2TableNavigator:
 		)
 
 		if tableObj is None:
-			descendantLookupDebug[
-				"failReason"
-			] = "tableObjMissing"
+			descendantLookupDebug["failReason"] = "tableObjMissing"
 
 			return _finishReturn(
 				False,
@@ -1442,10 +1393,8 @@ class WriterIA2TableNavigator:
 				"tableObjMissing",
 			)
 
-		tableKey = (
-			self._getDirectCellCoordinateCacheTableKey(
-				tableObj
-			)
+		tableKey = self._getDirectCellCoordinateCacheTableKey(
+			tableObj,
 		)
 
 		self._setMoveTimingProbe1cValue(
@@ -1456,10 +1405,7 @@ class WriterIA2TableNavigator:
 
 		cache = self._getDirectCellCoordinateCacheState()
 
-		cacheMatchesTable = (
-			bool(cache.get("built"))
-			and cache.get("tableKey") == tableKey
-		)
+		cacheMatchesTable = bool(cache.get("built")) and cache.get("tableKey") == tableKey
 
 		self._setMoveTimingProbe1cValue(
 			timing,
@@ -1469,7 +1415,7 @@ class WriterIA2TableNavigator:
 
 		if cacheMatchesTable:
 			stats["directChildCount"] = int(
-				cache.get("directChildCount") or 0
+				cache.get("directChildCount") or 0,
 			)
 
 			self._markMoveTimingProbe1c(
@@ -1477,15 +1423,13 @@ class WriterIA2TableNavigator:
 				"descendantCacheLookupStartPerf",
 			)
 
-			cacheStatus, cachedObj = (
-				self._lookupDirectCellCoordinateCache(
-					cache,
-					row,
-					column,
-					excludeCellObj,
-					descendantLookupDebug,
-					timing=timing,
-				)
+			cacheStatus, cachedObj = self._lookupDirectCellCoordinateCache(
+				cache,
+				row,
+				column,
+				excludeCellObj,
+				descendantLookupDebug,
+				timing=timing,
 			)
 
 			self._markMoveTimingProbe1c(
@@ -1523,16 +1467,16 @@ class WriterIA2TableNavigator:
 
 			stats["cacheBuilt"] = True
 			stats["directChildCount"] = int(
-				cache.get("directChildCount") or 0
+				cache.get("directChildCount") or 0,
 			)
 			stats["directVisitedCount"] = int(
-				cache.get("directChildCount") or 0
+				cache.get("directChildCount") or 0,
 			)
 			stats["directContextCallCount"] = int(
-				cache.get("directContextCallCount") or 0
+				cache.get("directContextCallCount") or 0,
 			)
 			stats["directContextTotalMs"] = float(
-				cache.get("directContextTotalMs") or 0.0
+				cache.get("directContextTotalMs") or 0.0,
 			)
 
 			self._markMoveTimingProbe1c(
@@ -1540,15 +1484,13 @@ class WriterIA2TableNavigator:
 				"descendantCacheLookupStartPerf",
 			)
 
-			cacheStatus, cachedObj = (
-				self._lookupDirectCellCoordinateCache(
-					cache,
-					row,
-					column,
-					excludeCellObj,
-					descendantLookupDebug,
-					timing=timing,
-				)
+			cacheStatus, cachedObj = self._lookupDirectCellCoordinateCache(
+				cache,
+				row,
+				column,
+				excludeCellObj,
+				descendantLookupDebug,
+				timing=timing,
 			)
 
 			self._markMoveTimingProbe1c(
@@ -1576,13 +1518,13 @@ class WriterIA2TableNavigator:
 				rawCandidates = []
 
 			stats["directCoveringCount"] = len(
-				rawCandidates
+				rawCandidates,
 			)
 			stats["directCandidateCount"] = int(
 				descendantLookupDebug.get(
 					"candidateCount",
 				)
-				or 0
+				or 0,
 			)
 
 			if cacheStatus == "hit":
@@ -1615,7 +1557,7 @@ class WriterIA2TableNavigator:
 
 		if not isinstance(directChildren, list):
 			directChildren = list(
-				directChildren or []
+				directChildren or [],
 			)
 
 		contextByObjectIdentity = cache.get(
@@ -1630,39 +1572,31 @@ class WriterIA2TableNavigator:
 			contextByObjectIdentity = {}
 
 		def addDeepCandidate(
-			candidates: list[
-				tuple[int, int, int, object]
-			],
+			candidates: list[tuple[int, int, int, object]],
 			candidateObjectsSeen: set[int],
 			obj: object,
 			scanOrder: int,
 		) -> int:
-			stats["deepContextCallCount"] = (
-				int(stats["deepContextCallCount"]) + 1
-			)
+			stats["deepContextCallCount"] = int(stats["deepContextCallCount"]) + 1
 
 			contextStart = time.perf_counter()
 
 			context = contextByObjectIdentity.get(
-				id(obj)
+				id(obj),
 			)
 
 			if context is None:
 				try:
 					context = self.getContextFromObject(
-						obj
+						obj,
 					)
 				except Exception:
 					context = None
 
 			contextEnd = time.perf_counter()
 
-			stats["deepContextTotalMs"] = (
-				float(stats["deepContextTotalMs"])
-				+ (
-					(contextEnd - contextStart)
-					* 1000
-				)
+			stats["deepContextTotalMs"] = float(stats["deepContextTotalMs"]) + (
+				(contextEnd - contextStart) * 1000
 			)
 
 			if not self._contextContainsCoordinate(
@@ -1672,103 +1606,68 @@ class WriterIA2TableNavigator:
 			):
 				return scanOrder
 
-			stats["deepCoveringCount"] = (
-				int(stats["deepCoveringCount"]) + 1
-			)
+			stats["deepCoveringCount"] = int(stats["deepCoveringCount"]) + 1
 
-			cellObj = (
-				context.get("cellObj")
-				if context
-				else None
-			)
+			cellObj = context.get("cellObj") if context else None
 			candidateObj = cellObj or obj
 
-			if (
-				excludeCellObj is not None
-				and self._isSameCellObject(
-					candidateObj,
-					excludeCellObj,
-				)
+			if excludeCellObj is not None and self._isSameCellObject(
+				candidateObj,
+				excludeCellObj,
 			):
-				descendantLookupDebug[
-					"skippedExcludedCellCount"
-				] = (
+				descendantLookupDebug["skippedExcludedCellCount"] = (
 					int(
 						descendantLookupDebug.get(
 							"skippedExcludedCellCount",
 						)
-						or 0
+						or 0,
 					)
 					+ 1
 				)
 				return scanOrder
 
 			candidateObjIdentity = id(
-				candidateObj
+				candidateObj,
 			)
 
-			if (
-				candidateObjIdentity
-				in candidateObjectsSeen
-			):
+			if candidateObjIdentity in candidateObjectsSeen:
 				return scanOrder
 
 			candidateObjectsSeen.add(
-				candidateObjIdentity
+				candidateObjIdentity,
 			)
 
-			rowIndex = (
-				context.get("rowIndex")
-				if context
-				else None
-			)
-			columnIndex = (
-				context.get("columnIndex")
-				if context
-				else None
-			)
+			rowIndex = context.get("rowIndex") if context else None
+			columnIndex = context.get("columnIndex") if context else None
 
-			exactStartPenalty = (
-				0
-				if (
-					rowIndex == row
-					and columnIndex == column
-				)
-				else 1
-			)
+			exactStartPenalty = 0 if (rowIndex == row and columnIndex == column) else 1
 
 			spanArea = self._getContextSpanArea(
-				context
+				context,
 			)
 
-			candidates.append((
-				exactStartPenalty,
-				spanArea,
-				scanOrder,
-				candidateObj,
-			))
+			candidates.append(
+				(
+					exactStartPenalty,
+					spanArea,
+					scanOrder,
+					candidateObj,
+				),
+			)
 
 			return scanOrder + 1
 
 		def chooseBestCandidate(
-			candidates: list[
-				tuple[int, int, int, object]
-			],
+			candidates: list[tuple[int, int, int, object]],
 		) -> tuple[
 			bool,
 			object | None,
 			str,
 		]:
-			descendantLookupDebug[
-				"candidateCount"
-			] = len(candidates)
+			descendantLookupDebug["candidateCount"] = len(candidates)
 
 			if not candidates:
-				descendantLookupDebug[
-					"failReason"
-				] = (
-					"descendantCellCoveringCoordinateNotFound"
-				)
+				descendantLookupDebug["failReason"] = "descendantCellCoveringCoordinateNotFound"
 
 				return (
 					False,
@@ -1781,27 +1680,21 @@ class WriterIA2TableNavigator:
 					item[0],
 					item[1],
 					item[2],
-				)
+				),
 			)
 
 			selectedObj = candidates[0][3]
 
 			try:
-				descendantLookupDebug[
-					"selectedDescription"
-				] = getattr(
+				descendantLookupDebug["selectedDescription"] = getattr(
 					selectedObj,
 					"description",
 					None,
 				)
 			except Exception:
-				descendantLookupDebug[
-					"selectedDescription"
-				] = None
+				descendantLookupDebug["selectedDescription"] = None
 
-			descendantLookupDebug[
-				"selectedSameAsExclude"
-			] = (
+			descendantLookupDebug["selectedSameAsExclude"] = (
 				excludeCellObj is not None
 				and self._isSameCellObject(
 					selectedObj,
@@ -1815,16 +1708,14 @@ class WriterIA2TableNavigator:
 		visitedCount = 0
 		seen: set[int] = set()
 		pending: list[object] = list(
-			directChildren
+			directChildren,
 		)
 
 		stats["deepInitialPendingCount"] = len(
-			pending
+			pending,
 		)
 
-		candidates: list[
-			tuple[int, int, int, object]
-		] = []
+		candidates: list[tuple[int, int, int, object]] = []
 		candidateObjectsSeen: set[int] = set()
 		scanOrder = 0
 
@@ -1833,10 +1724,7 @@ class WriterIA2TableNavigator:
 			"descendantBeforeDeepScanPerf",
 		)
 
-		while (
-			pending
-			and visitedCount < maxNodes
-		):
+		while pending and visitedCount < maxNodes:
 			obj = pending.pop(0)
 
 			if obj is None:
@@ -1850,9 +1738,7 @@ class WriterIA2TableNavigator:
 			seen.add(objIdentity)
 			visitedCount += 1
 
-			stats["deepVisitedCount"] = (
-				visitedCount
-			)
+			stats["deepVisitedCount"] = visitedCount
 
 			scanOrder = addDeepCandidate(
 				candidates,
@@ -1880,21 +1766,14 @@ class WriterIA2TableNavigator:
 
 			stats["deepChildrenExpandCount"] = (
 				int(
-					stats[
-						"deepChildrenExpandCount"
-					]
+					stats["deepChildrenExpandCount"],
 				)
 				+ 1
 			)
 
-			stats["deepChildrenAddedCount"] = (
-				int(
-					stats[
-						"deepChildrenAddedCount"
-					]
-				)
-				+ len(childrenList)
-			)
+			stats["deepChildrenAddedCount"] = int(
+				stats["deepChildrenAddedCount"],
+			) + len(childrenList)
 
 			pending.extend(childrenList)
 
@@ -1904,7 +1783,7 @@ class WriterIA2TableNavigator:
 		)
 
 		stats["deepCandidateCount"] = len(
-			candidates
+			candidates,
 		)
 
 		self._markMoveTimingProbe1c(
@@ -1912,9 +1791,7 @@ class WriterIA2TableNavigator:
 			"descendantBeforeDeepChoosePerf",
 		)
 
-		ok, selectedObj, reason = (
-			chooseBestCandidate(candidates)
-		)
+		ok, selectedObj, reason = chooseBestCandidate(candidates)
 
 		self._markMoveTimingProbe1c(
 			timing,
@@ -2213,9 +2090,7 @@ class WriterIA2TableNavigator:
 							"targetLookupAfterDirectTargetContextPerf",
 						)
 						directFailReason = (
-							targetContext.get("failReason", "")
-							if targetContext
-							else "targetContextMissing"
+							targetContext.get("failReason", "") if targetContext else "targetContextMissing"
 						)
 						targetLookupDebug["directFailReason"] = directFailReason
 
@@ -2248,9 +2123,9 @@ class WriterIA2TableNavigator:
 
 					directResolvedSameAsSource = False
 					try:
-						directResolvedSameAsSource = (
-							sourceCellObj is not None
-							and self._isSameCellObject(resolvedTargetObj, sourceCellObj)
+						directResolvedSameAsSource = sourceCellObj is not None and self._isSameCellObject(
+							resolvedTargetObj,
+							sourceCellObj,
 						)
 					except Exception:
 						directResolvedSameAsSource = False
@@ -2321,7 +2196,6 @@ class WriterIA2TableNavigator:
 				targetColumn,
 				excludeCellObj=sourceCellObj,
 				timing=timing,
-
 			)
 			self._markMoveTimingProbe1c(
 				timing,
@@ -2374,9 +2248,9 @@ class WriterIA2TableNavigator:
 			fallbackCoversTargetCoordinate = _contextCoversTarget(fallbackContext)
 			fallbackSameAsSource = False
 			try:
-				fallbackSameAsSource = (
-					sourceCellObj is not None
-					and self._isSameCellObject(fallbackObj, sourceCellObj)
+				fallbackSameAsSource = sourceCellObj is not None and self._isSameCellObject(
+					fallbackObj,
+					sourceCellObj,
 				)
 			except Exception:
 				fallbackSameAsSource = False
@@ -2461,7 +2335,6 @@ class WriterIA2TableNavigator:
 			"failStage": "",
 			"failReason": "",
 		}
-
 
 		cellObj = self.getNearestTableCellFromObject(obj)
 		if cellObj is None:
@@ -2555,15 +2428,9 @@ class WriterIA2TableNavigator:
 				"inTable": False,
 				"source": source,
 				"failReason": (
-					context.get("failReason", "notInTable")
-					if isinstance(context, dict)
-					else "contextMissing"
+					context.get("failReason", "notInTable") if isinstance(context, dict) else "contextMissing"
 				),
-				"failStage": (
-					context.get("failStage", "")
-					if isinstance(context, dict)
-					else ""
-				),
+				"failStage": (context.get("failStage", "") if isinstance(context, dict) else ""),
 			}
 
 		rowIndex = context.get("rowIndex")
@@ -2634,7 +2501,6 @@ class WriterIA2TableNavigator:
 		return {
 			"inTable": True,
 			"source": source,
-
 			# Table identity.
 			"tableID": tableID,
 			"tableIDSource": tableIDSource,
@@ -2649,7 +2515,6 @@ class WriterIA2TableNavigator:
 			"tableObjWindowHandle": tableObjWindowHandle,
 			"tableObjProcessID": tableObjProcessID,
 			"tableObjChildCount": context.get("tableObjChildCount"),
-
 			# IA2 raw / 0-based data.
 			"cellObj": context.get("cellObj"),
 			"iaTableCell": context.get("iaTableCell"),
@@ -2660,7 +2525,6 @@ class WriterIA2TableNavigator:
 			"columnSpan": columnSpan,
 			"nRows": nRows,
 			"nColumns": nColumns,
-
 			# NVDA-style / user-facing 1-based properties.
 			"rowNumber": rowNumber,
 			"columnNumber": columnNumber,
@@ -2704,9 +2568,7 @@ class WriterIA2TableNavigator:
 
 		if not cellInfo or not cellInfo.get("inTable"):
 			result["failReason"] = (
-				cellInfo.get("failReason", "notInTable")
-				if isinstance(cellInfo, dict)
-				else "cellInfoMissing"
+				cellInfo.get("failReason", "notInTable") if isinstance(cellInfo, dict) else "cellInfoMissing"
 			)
 			return result
 
@@ -2757,19 +2619,21 @@ class WriterIA2TableNavigator:
 		cellField["table-columnsspanned"] = columnSpan
 		cellField["_startOfNode"] = True
 
-		result.update({
-			"ok": True,
-			"failReason": "",
-			"tableID": tableID,
-			"tableField": tableField,
-			"cellField": cellField,
-			"rowNumber": rowNumber,
-			"columnNumber": columnNumber,
-			"rowSpan": rowSpan,
-			"columnSpan": columnSpan,
-			"rowCount": rowCount,
-			"columnCount": columnCount,
-		})
+		result.update(
+			{
+				"ok": True,
+				"failReason": "",
+				"tableID": tableID,
+				"tableField": tableField,
+				"cellField": cellField,
+				"rowNumber": rowNumber,
+				"columnNumber": columnNumber,
+				"rowSpan": rowSpan,
+				"columnSpan": columnSpan,
+				"rowCount": rowCount,
+				"columnCount": columnCount,
+			},
+		)
 		return result
 
 	def containsCoordinate(
@@ -2777,7 +2641,7 @@ class WriterIA2TableNavigator:
 		cellInfo: dict[str, object],
 		rowIndex: int,
 		columnIndex: int,
-	 ) -> bool:
+	) -> bool:
 		"""Return whether a 0-based table coordinate is covered by this cell.
 
 		This is important for merged cells. IA2 may return the owner cell for a
@@ -2818,6 +2682,7 @@ class WriterIA2TableNavigator:
 		prefix: str = "",
 	) -> list[str]:
 		"""Return stable debug fields for Writer IA2 table-cell info."""
+
 		def key(name: str) -> str:
 			return f"{prefix}{name}" if prefix else name
 
@@ -2862,10 +2727,7 @@ class WriterIA2TableNavigator:
 		except Exception:
 			columnSpan = 1
 
-		return (
-			rowIndex <= row < rowIndex + rowSpan
-			and columnIndex <= column < columnIndex + columnSpan
-		)
+		return rowIndex <= row < rowIndex + rowSpan and columnIndex <= column < columnIndex + columnSpan
 
 	def _sanitizeSourceCellSpan(
 		self,
@@ -2986,10 +2848,7 @@ class WriterIA2TableNavigator:
 			"sanitizeBeforeDecisionPerf",
 		)
 
-		sourceCoordinateValid = (
-			isinstance(rowIndex, int)
-			and isinstance(columnIndex, int)
-		)
+		sourceCoordinateValid = isinstance(rowIndex, int) and isinstance(columnIndex, int)
 		tableObjExists = tableObj is not None
 
 		directionUsesRowSpan = direction == "down"
@@ -2998,19 +2857,11 @@ class WriterIA2TableNavigator:
 		rowClampScanNeededBySpan = effectiveRowSpan > 1
 		columnClampScanNeededBySpan = effectiveColumnSpan > 1
 
-		rowScanEnabledForDirection = (
-			directionUsesRowSpan
-			and rowClampScanNeededBySpan
-		)
-		columnScanEnabledForDirection = (
-			directionUsesColumnSpan
-			and columnClampScanNeededBySpan
-		)
+		rowScanEnabledForDirection = directionUsesRowSpan and rowClampScanNeededBySpan
+		columnScanEnabledForDirection = directionUsesColumnSpan and columnClampScanNeededBySpan
 
 		directionFastPathApplied = (
-			sourceCoordinateValid
-			and not rowScanEnabledForDirection
-			and not columnScanEnabledForDirection
+			sourceCoordinateValid and not rowScanEnabledForDirection and not columnScanEnabledForDirection
 		)
 
 		if direction in ("up", "left"):
@@ -3131,7 +2982,7 @@ class WriterIA2TableNavigator:
 
 		if directionFastPathApplied:
 			return _finishReturn(
-				f"directionFastPath:{directionFastPathReason}"
+				f"directionFastPath:{directionFastPathReason}",
 			)
 
 		if tableObj is None:
@@ -3144,12 +2995,10 @@ class WriterIA2TableNavigator:
 		)
 		try:
 			directChildren = list(
-				getattr(tableObj, "children", None) or []
+				getattr(tableObj, "children", None) or [],
 			)
 		except Exception as e:
-			details["sourceSpanSanityFailReason"] = (
-				f"childrenAccessFailed: {e!r}"
-			)
+			details["sourceSpanSanityFailReason"] = f"childrenAccessFailed: {e!r}"
 			self._markMoveTimingProbe1c(
 				timing,
 				"sanitizeAfterDirectChildrenPerf",
@@ -3175,11 +3024,7 @@ class WriterIA2TableNavigator:
 		)
 
 		sourceCellObj = context.get("cellObj")
-		sourceCellObjIdentity = (
-			id(sourceCellObj)
-			if sourceCellObj is not None
-			else None
-		)
+		sourceCellObjIdentity = id(sourceCellObj) if sourceCellObj is not None else None
 
 		try:
 			sourceCellIA2UniqueID = getattr(
@@ -3213,10 +3058,7 @@ class WriterIA2TableNavigator:
 			if cellObj is None:
 				return False
 
-			if (
-				sourceCellObjIdentity is not None
-				and id(cellObj) == sourceCellObjIdentity
-			):
+			if sourceCellObjIdentity is not None and id(cellObj) == sourceCellObjIdentity:
 				return True
 
 			try:
@@ -3228,16 +3070,10 @@ class WriterIA2TableNavigator:
 			except Exception:
 				cellIA2UniqueID = None
 
-			if (
-				sourceCellIA2UniqueID is not None
-				and cellIA2UniqueID == sourceCellIA2UniqueID
-			):
+			if sourceCellIA2UniqueID is not None and cellIA2UniqueID == sourceCellIA2UniqueID:
 				return True
 
-			return (
-				cellContext.get("rowIndex") == rowIndex
-				and cellContext.get("columnIndex") == columnIndex
-			)
+			return cellContext.get("rowIndex") == rowIndex and cellContext.get("columnIndex") == columnIndex
 
 		def getForeignCoveringCell(
 			targetRow: int,
@@ -3268,21 +3104,16 @@ class WriterIA2TableNavigator:
 				except Exception:
 					continue
 
-				if (
-					not childContext
-					or not childContext.get("inTable")
-				):
+				if not childContext or not childContext.get("inTable"):
 					continue
 
 				scanStats["foreignLookupContextOkCount"] += 1
 
 				try:
-					coversCoordinate = (
-						self._contextContainsCoordinate(
-							childContext,
-							targetRow,
-							targetColumn,
-						)
+					coversCoordinate = self._contextContainsCoordinate(
+						childContext,
+						targetRow,
+						targetColumn,
 					)
 				except Exception:
 					coversCoordinate = False
@@ -3290,46 +3121,40 @@ class WriterIA2TableNavigator:
 				if not coversCoordinate:
 					continue
 
-				scanStats[
-					"foreignLookupCoveringCandidateCount"
-				] += 1
+				scanStats["foreignLookupCoveringCandidateCount"] += 1
 
 				cellObj = childContext.get("cellObj") or child
 				if isSourceCellObject(
 					cellObj,
 					childContext,
 				):
-					scanStats[
-						"foreignLookupSourceExcludedCount"
-					] += 1
+					scanStats["foreignLookupSourceExcludedCount"] += 1
 					continue
 
 				exactStartPenalty = (
 					0
 					if (
-						childContext.get("rowIndex")
-						== targetRow
-						and childContext.get("columnIndex")
-						== targetColumn
+						childContext.get("rowIndex") == targetRow
+						and childContext.get("columnIndex") == targetColumn
 					)
 					else 1
 				)
 
 				spanArea = self._getContextSpanArea(
-					childContext
+					childContext,
 				)
 
-				candidates.append((
-					exactStartPenalty,
-					spanArea,
-					scanOrder,
-					cellObj,
-					childContext,
-				))
+				candidates.append(
+					(
+						exactStartPenalty,
+						spanArea,
+						scanOrder,
+						cellObj,
+						childContext,
+					),
+				)
 
-				scanStats[
-					"foreignLookupAcceptedCandidateCount"
-				] += 1
+				scanStats["foreignLookupAcceptedCandidateCount"] += 1
 				scanOrder += 1
 
 			if not candidates:
@@ -3340,7 +3165,7 @@ class WriterIA2TableNavigator:
 					item[0],
 					item[1],
 					item[2],
-				)
+				),
 			)
 
 			return (
@@ -3374,11 +3199,9 @@ class WriterIA2TableNavigator:
 				rowIndex + 1,
 				rowLimit,
 			):
-				exists, blockerObj, blockerContext = (
-					getForeignCoveringCell(
-						checkRow,
-						columnIndex,
-					)
+				exists, blockerObj, blockerContext = getForeignCoveringCell(
+					checkRow,
+					columnIndex,
 				)
 
 				if not exists:
@@ -3394,17 +3217,13 @@ class WriterIA2TableNavigator:
 				details["sourceRowSpanBlockerRow"] = checkRow
 
 				try:
-					details[
-						"sourceRowSpanBlockerDescription"
-					] = getattr(
+					details["sourceRowSpanBlockerDescription"] = getattr(
 						blockerObj,
 						"description",
 						None,
 					)
 				except Exception:
-					details[
-						"sourceRowSpanBlockerDescription"
-					] = None
+					details["sourceRowSpanBlockerDescription"] = None
 
 				break
 
@@ -3447,11 +3266,9 @@ class WriterIA2TableNavigator:
 				columnIndex + 1,
 				columnLimit,
 			):
-				exists, blockerObj, blockerContext = (
-					getForeignCoveringCell(
-						rowIndex,
-						checkColumn,
-					)
+				exists, blockerObj, blockerContext = getForeignCoveringCell(
+					rowIndex,
+					checkColumn,
 				)
 
 				if not exists:
@@ -3463,25 +3280,17 @@ class WriterIA2TableNavigator:
 				)
 
 				details["sourceSpanSanityApplied"] = True
-				details[
-					"sourceColumnSpanClamped"
-				] = True
-				details[
-					"sourceColumnSpanBlockerColumn"
-				] = checkColumn
+				details["sourceColumnSpanClamped"] = True
+				details["sourceColumnSpanBlockerColumn"] = checkColumn
 
 				try:
-					details[
-						"sourceColumnSpanBlockerDescription"
-					] = getattr(
+					details["sourceColumnSpanBlockerDescription"] = getattr(
 						blockerObj,
 						"description",
 						None,
 					)
 				except Exception:
-					details[
-						"sourceColumnSpanBlockerDescription"
-					] = None
+					details["sourceColumnSpanBlockerDescription"] = None
 
 				break
 
@@ -3786,23 +3595,25 @@ class WriterIA2TableNavigator:
 			"tableNColumns": cellInfo.get("nColumns"),
 		}
 
-		result.update({
-			"ok": True,
-			"failReason": "",
-			"tableID": fieldResult.get("tableID", ""),
-			"tableField": fieldResult.get("tableField"),
-			"cellField": fieldResult.get("cellField"),
-			"rowNumber": fieldResult.get("rowNumber"),
-			"columnNumber": fieldResult.get("columnNumber"),
-			"rowSpan": fieldResult.get("rowSpan"),
-			"columnSpan": fieldResult.get("columnSpan"),
-			"rowCount": fieldResult.get("rowCount"),
-			"columnCount": fieldResult.get("columnCount"),
-			"identityDebug": identityDebug,
-			"context": context,
-			"cellInfo": cellInfo,
-			"fieldResult": fieldResult,
-		})
+		result.update(
+			{
+				"ok": True,
+				"failReason": "",
+				"tableID": fieldResult.get("tableID", ""),
+				"tableField": fieldResult.get("tableField"),
+				"cellField": fieldResult.get("cellField"),
+				"rowNumber": fieldResult.get("rowNumber"),
+				"columnNumber": fieldResult.get("columnNumber"),
+				"rowSpan": fieldResult.get("rowSpan"),
+				"columnSpan": fieldResult.get("columnSpan"),
+				"rowCount": fieldResult.get("rowCount"),
+				"columnCount": fieldResult.get("columnCount"),
+				"identityDebug": identityDebug,
+				"context": context,
+				"cellInfo": cellInfo,
+				"fieldResult": fieldResult,
+			},
+		)
 		return result
 
 	def _markMoveTimingProbe1c(
@@ -3819,7 +3630,6 @@ class WriterIA2TableNavigator:
 			timing[key] = time.perf_counter()
 		except Exception:
 			pass
-
 
 	def _setMoveTimingProbe1cValue(
 		self,
@@ -3860,22 +3670,14 @@ class WriterIA2TableNavigator:
 
 		if tableObj is None:
 			try:
-				tableObj = (
-					getattr(sourceCellObj, "parent", None)
-					if sourceCellObj is not None
-					else None
-				)
+				tableObj = getattr(sourceCellObj, "parent", None) if sourceCellObj is not None else None
 			except Exception:
 				tableObj = None
 
 		result["targetRow"] = targetRow
 		result["targetColumn"] = targetColumn
 
-		lookupSourceCellObj = (
-			None
-			if allowSourceCell
-			else sourceCellObj
-		)
+		lookupSourceCellObj = None if allowSourceCell else sourceCellObj
 
 		self._markMoveTimingProbe1c(
 			timing,
@@ -3914,9 +3716,7 @@ class WriterIA2TableNavigator:
 			self._setMoveTimingProbe1cValue(
 				timing,
 				"navigator.targetObjectClass",
-				targetNVDAObject.__class__.__name__
-				if targetNVDAObject is not None
-				else "<None>",
+				targetNVDAObject.__class__.__name__ if targetNVDAObject is not None else "<None>",
 			)
 		except Exception:
 			pass
@@ -3946,7 +3746,7 @@ class WriterIA2TableNavigator:
 			"navigatorBeforeTargetVerifyContextPerf",
 		)
 		targetContext = self.getContextFromObject(
-			targetNVDAObject
+			targetNVDAObject,
 		)
 		self._markMoveTimingProbe1c(
 			timing,
@@ -3954,50 +3754,38 @@ class WriterIA2TableNavigator:
 		)
 
 		targetObjectRowIndex = targetContext.get(
-			"rowIndex"
+			"rowIndex",
 		)
 		targetObjectColumnIndex = targetContext.get(
-			"columnIndex"
+			"columnIndex",
 		)
 		targetObjectRowSpan = targetContext.get(
-			"rowSpan"
+			"rowSpan",
 		)
 		targetObjectColumnSpan = targetContext.get(
-			"columnSpan"
+			"columnSpan",
 		)
 
-		result["targetObjectRowIndex"] = (
-			targetObjectRowIndex
-		)
-		result["targetObjectColumnIndex"] = (
-			targetObjectColumnIndex
-		)
-		result["targetObjectRowSpan"] = (
-			targetObjectRowSpan
-		)
-		result["targetObjectColumnSpan"] = (
-			targetObjectColumnSpan
-		)
+		result["targetObjectRowIndex"] = targetObjectRowIndex
+		result["targetObjectColumnIndex"] = targetObjectColumnIndex
+		result["targetObjectRowSpan"] = targetObjectRowSpan
+		result["targetObjectColumnSpan"] = targetObjectColumnSpan
 
 		self._markMoveTimingProbe1c(
 			timing,
 			"navigatorBeforeTargetCoordinateVerifyPerf",
 		)
-		targetObjectMatchesTarget = (
-			self._contextContainsCoordinate(
-				targetContext,
-				targetRow,
-				targetColumn,
-			)
+		targetObjectMatchesTarget = self._contextContainsCoordinate(
+			targetContext,
+			targetRow,
+			targetColumn,
 		)
 		self._markMoveTimingProbe1c(
 			timing,
 			"navigatorAfterTargetCoordinateVerifyPerf",
 		)
 
-		result["targetObjectMatchesTarget"] = (
-			targetObjectMatchesTarget
-		)
+		result["targetObjectMatchesTarget"] = targetObjectMatchesTarget
 
 		self._setMoveTimingProbe1cValue(
 			timing,
@@ -4093,7 +3881,7 @@ class WriterIA2TableNavigator:
 
 		try:
 			api.setFocusObject(
-				targetNVDAObject
+				targetNVDAObject,
 			)
 			apiSetFocusObjectOk = True
 		except Exception as e:
@@ -4104,12 +3892,8 @@ class WriterIA2TableNavigator:
 			"navigatorAfterApiSetFocusObjectPerf",
 		)
 
-		result["apiSetFocusObjectOk"] = (
-			apiSetFocusObjectOk
-		)
-		result["apiSetFocusObjectFailReason"] = (
-			apiSetFocusObjectFailReason
-		)
+		result["apiSetFocusObjectOk"] = apiSetFocusObjectOk
+		result["apiSetFocusObjectFailReason"] = apiSetFocusObjectFailReason
 
 		self._setMoveTimingProbe1cValue(
 			timing,
@@ -4125,18 +3909,10 @@ class WriterIA2TableNavigator:
 		# Keep legacy after* fields for existing probes.
 		# These describe the accepted target object, not necessarily
 		# a fresh focus event from NVDA.
-		result["afterRowIndex"] = (
-			targetObjectRowIndex
-		)
-		result["afterColumnIndex"] = (
-			targetObjectColumnIndex
-		)
-		result["afterRowSpan"] = (
-			targetObjectRowSpan
-		)
-		result["afterColumnSpan"] = (
-			targetObjectColumnSpan
-		)
+		result["afterRowIndex"] = targetObjectRowIndex
+		result["afterColumnIndex"] = targetObjectColumnIndex
+		result["afterRowSpan"] = targetObjectRowSpan
+		result["afterColumnSpan"] = targetObjectColumnSpan
 
 		apiFocusRowIndex = None
 		apiFocusColumnIndex = None
@@ -4152,28 +3928,26 @@ class WriterIA2TableNavigator:
 		try:
 			apiFocusObj = api.getFocusObject()
 			apiFocusContext = self.getContextFromObject(
-				apiFocusObj
+				apiFocusObj,
 			)
 
 			apiFocusRowIndex = apiFocusContext.get(
-				"rowIndex"
+				"rowIndex",
 			)
 			apiFocusColumnIndex = apiFocusContext.get(
-				"columnIndex"
+				"columnIndex",
 			)
 			apiFocusRowSpan = apiFocusContext.get(
-				"rowSpan"
+				"rowSpan",
 			)
 			apiFocusColumnSpan = apiFocusContext.get(
-				"columnSpan"
+				"columnSpan",
 			)
 
-			apiFocusMatchesTarget = (
-				self._contextContainsCoordinate(
-					apiFocusContext,
-					targetRow,
-					targetColumn,
-				)
+			apiFocusMatchesTarget = self._contextContainsCoordinate(
+				apiFocusContext,
+				targetRow,
+				targetColumn,
 			)
 		except Exception:
 			apiFocusMatchesTarget = False
@@ -4183,21 +3957,11 @@ class WriterIA2TableNavigator:
 			"navigatorAfterApiFocusCheckPerf",
 		)
 
-		result["apiFocusRowIndex"] = (
-			apiFocusRowIndex
-		)
-		result["apiFocusColumnIndex"] = (
-			apiFocusColumnIndex
-		)
-		result["apiFocusRowSpan"] = (
-			apiFocusRowSpan
-		)
-		result["apiFocusColumnSpan"] = (
-			apiFocusColumnSpan
-		)
-		result["apiFocusMatchesTarget"] = (
-			apiFocusMatchesTarget
-		)
+		result["apiFocusRowIndex"] = apiFocusRowIndex
+		result["apiFocusColumnIndex"] = apiFocusColumnIndex
+		result["apiFocusRowSpan"] = apiFocusRowSpan
+		result["apiFocusColumnSpan"] = apiFocusColumnSpan
+		result["apiFocusMatchesTarget"] = apiFocusMatchesTarget
 
 		self._setMoveTimingProbe1cValue(
 			timing,
@@ -4218,9 +3982,7 @@ class WriterIA2TableNavigator:
 		# Keep this legacy field for existing probes.
 		# Here it means the target object matches the requested target cell,
 		# not necessarily that api.getFocusObject() has already updated.
-		result["landedOnTarget"] = (
-			targetObjectMatchesTarget
-		)
+		result["landedOnTarget"] = targetObjectMatchesTarget
 
 		result["ok"] = True
 		result["moved"] = True
@@ -4258,9 +4020,7 @@ class WriterIA2TableNavigator:
 				"unsupportedBoundaryAxis",
 			)
 
-		operation = (
-			f"{movement}{axis[0].upper()}{axis[1:]}"
-		)
+		operation = f"{movement}{axis[0].upper()}{axis[1:]}"
 		result = self._newResult(operation)
 
 		self._markMoveTimingProbe1c(
@@ -4310,54 +4070,44 @@ class WriterIA2TableNavigator:
 						context.get(
 							"failStage",
 							"",
-						)
+						),
 					),
 					str(
 						context.get(
 							"failReason",
 							"",
-						)
+						),
 					),
-				)
+				),
 			)
 
 		rowIndex = context.get("rowIndex")
 		columnIndex = context.get(
-			"columnIndex"
+			"columnIndex",
 		)
 		nRows = context.get("nRows")
 		nColumns = context.get("nColumns")
 
-		if (
-			not isinstance(rowIndex, int)
-			or not isinstance(columnIndex, int)
-		):
+		if not isinstance(rowIndex, int) or not isinstance(columnIndex, int):
 			return _finishReturn(
 				self._fail(
 					result,
 					"validateCoordinates",
 					"invalidCoordinates",
-				)
+				),
 			)
 
-		if (
-			not isinstance(nRows, int)
-			or not isinstance(nColumns, int)
-			or nRows <= 0
-			or nColumns <= 0
-		):
+		if not isinstance(nRows, int) or not isinstance(nColumns, int) or nRows <= 0 or nColumns <= 0:
 			return _finishReturn(
 				self._fail(
 					result,
 					"validateTableSize",
 					"invalidTableSize",
-				)
+				),
 			)
 
 		result["beforeRowIndex"] = rowIndex
-		result["beforeColumnIndex"] = (
-			columnIndex
-		)
+		result["beforeColumnIndex"] = columnIndex
 		result["nRows"] = nRows
 		result["nColumns"] = nColumns
 
@@ -4397,7 +4147,7 @@ class WriterIA2TableNavigator:
 				result,
 				allowSourceCell=True,
 				timing=timing,
-			)
+			),
 		)
 
 	def move(
@@ -4497,7 +4247,7 @@ class WriterIA2TableNavigator:
 					result,
 					str(context["failStage"]),
 					str(context["failReason"]),
-				)
+				),
 			)
 
 		self._markMoveTimingProbe1c(
@@ -4511,15 +4261,13 @@ class WriterIA2TableNavigator:
 		columnSpan = context.get("columnSpan") or 1
 		nRows = context["nRows"]
 		nColumns = context["nColumns"]
-		table2Obj = context["table2Obj"]
-
 		if not isinstance(rowIndex, int) or not isinstance(columnIndex, int):
 			self._markMoveTimingProbe1c(
 				timing,
 				"navigatorAfterValidateContextPerf",
 			)
 			return _finishReturn(
-				self._fail(result, "validateCoordinates", "invalidCoordinates")
+				self._fail(result, "validateCoordinates", "invalidCoordinates"),
 			)
 
 		try:
@@ -4538,7 +4286,7 @@ class WriterIA2TableNavigator:
 				"navigatorAfterValidateContextPerf",
 			)
 			return _finishReturn(
-				self._fail(result, "validateTableSize", "invalidTableSize")
+				self._fail(result, "validateTableSize", "invalidTableSize"),
 			)
 
 		sourceCellObj = context.get("cellObj")
@@ -4631,12 +4379,12 @@ class WriterIA2TableNavigator:
 				nColumns,
 			)
 			return _finishReturn(
-				self._edge(result, edgeReason, targetRow, targetColumn)
+				self._edge(result, edgeReason, targetRow, targetColumn),
 			)
 
 		if not isinstance(targetRow, int) or not isinstance(targetColumn, int):
 			return _finishReturn(
-				self._fail(result, "computeTargetCell", targetFailReason)
+				self._fail(result, "computeTargetCell", targetFailReason),
 			)
 
 		return _finishReturn(
@@ -4647,9 +4395,8 @@ class WriterIA2TableNavigator:
 				result,
 				allowSourceCell=False,
 				timing=timing,
-			)
+			),
 		)
-
 
 	def formatResultFields(self, prefix: str, result: dict[str, object]) -> list[str]:
 		"""Return stable debug fields for a move result."""
@@ -4681,6 +4428,7 @@ class WriterIA2TableNavigator:
 			f"{prefix}apiFocusRowIndex={result.get('apiFocusRowIndex')!r}",
 			f"{prefix}apiFocusColumnIndex={result.get('apiFocusColumnIndex')!r}",
 		]
+
 
 def _normalizeWriterIA2SpeechText(text: object) -> str:
 	"""Normalize real Writer cell text for speech.
@@ -4786,6 +4534,7 @@ def _getWriterIA2ObjectTextForSpeech(obj: object | None) -> str:
 
 	return ""
 
+
 def _getWriterIA2TableContentSpeechText(result: dict[str, object]) -> str:
 	"""Return real Writer table cell content text from a move result."""
 	for key in (
@@ -4800,10 +4549,12 @@ def _getWriterIA2TableContentSpeechText(result: dict[str, object]) -> str:
 
 	return ""
 
+
 def _getWriterIA2TableCellCoordsSpeechText(result: dict[str, object]) -> str:
 	"""Return Writer table cell coordinates from a move result."""
 	try:
 		import config
+
 		if not config.conf["documentFormatting"]["reportTableCellCoords"]:
 			return ""
 	except Exception:
@@ -4820,6 +4571,7 @@ def _getWriterIA2TableCellCoordsSpeechText(result: dict[str, object]) -> str:
 		)
 
 	return ""
+
 
 def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
 	"""Return speech text for a Writer IA2 table move result.
@@ -4842,6 +4594,7 @@ def _getWriterIA2TableMoveSpeech(result: dict[str, object]) -> str:
 
 	# Translators: Reported when a Writer table cell has no text and table coordinates are not reported.
 	return _("blank")
+
 
 def moveAndReportWriterIA2TableCell(
 	direction: str,
@@ -4874,7 +4627,6 @@ def moveAndReportWriterIA2TableCell(
 			ui.message(speechText)
 		return True
 
-
 	if result.get("edge"):
 		# Translators: Reported when table navigation reaches the edge of a table.
 		ui.message(_("Edge of table"))
@@ -4888,4 +4640,3 @@ def moveAndReportWriterIA2TableCell(
 	# Translators: Reported when Writer table navigation failed.
 	ui.message(_("Cannot move table cell"))
 	return True
-

@@ -44,7 +44,7 @@ class WriterIA2TableFieldBuilder:
 					"rowCount",
 					"table-rowcount",
 				),
-			)
+			),
 		)
 		if rowCount is not None:
 			field["table-rowcount"] = rowCount
@@ -57,7 +57,7 @@ class WriterIA2TableFieldBuilder:
 					"columnCount",
 					"table-columncount",
 				),
-			)
+			),
 		)
 		if columnCount is not None:
 			field["table-columncount"] = columnCount
@@ -100,7 +100,7 @@ class WriterIA2TableFieldBuilder:
 					"row",
 					"table-rownumber",
 				),
-			)
+			),
 		)
 		if rowNumber is not None:
 			field["table-rownumber"] = rowNumber
@@ -115,7 +115,7 @@ class WriterIA2TableFieldBuilder:
 					"col",
 					"table-columnnumber",
 				),
-			)
+			),
 		)
 		if columnNumber is not None:
 			field["table-columnnumber"] = columnNumber
@@ -127,7 +127,7 @@ class WriterIA2TableFieldBuilder:
 					"rowHeaderText",
 					"table-rowheadertext",
 				),
-			)
+			),
 		)
 		field["table-rowheadertext"] = rowHeaderText
 
@@ -138,7 +138,7 @@ class WriterIA2TableFieldBuilder:
 					"columnHeaderText",
 					"table-columnheadertext",
 				),
-			)
+			),
 		)
 		field["table-columnheadertext"] = columnHeaderText
 
@@ -149,7 +149,7 @@ class WriterIA2TableFieldBuilder:
 					"rowSpan",
 					"table-rowsspanned",
 				),
-			)
+			),
 		)
 		if rowSpan is not None:
 			field["table-rowsspanned"] = rowSpan
@@ -161,7 +161,7 @@ class WriterIA2TableFieldBuilder:
 					"columnSpan",
 					"table-columnsspanned",
 				),
-			)
+			),
 		)
 		if columnSpan is not None:
 			field["table-columnsspanned"] = columnSpan

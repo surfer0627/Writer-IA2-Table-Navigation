@@ -13,8 +13,6 @@ This module must not call ui.message, speech, or braille directly.
 
 from __future__ import annotations
 
-from typing import Any
-
 
 class WriterIA2TableContentProvider:
 	"""Provide cell, row, and column text content for Writer IA2 tables."""
@@ -36,12 +34,10 @@ class WriterIA2TableContentProvider:
 			"ok": False,
 			"failStage": "",
 			"failReason": "",
-
 			"context": None,
 			"cellInfo": None,
 			"tableObj": None,
 			"cellObj": None,
-
 			"tableID": "",
 			"rowNumber": None,
 			"columnNumber": None,
@@ -51,7 +47,6 @@ class WriterIA2TableContentProvider:
 			"columnEndNumber": None,
 			"nRows": None,
 			"nColumns": None,
-
 			"cellMap": None,
 			"cellMapResult": None,
 		}
@@ -68,11 +63,7 @@ class WriterIA2TableContentProvider:
 			result["failReason"] = "contextNotDict"
 			return result
 
-		if not (
-			context.get("inTable")
-			or context.get("contextInTable")
-			or context.get("ok")
-		):
+		if not (context.get("inTable") or context.get("contextInTable") or context.get("ok")):
 			result["failStage"] = "getContext"
 			result["failReason"] = context.get("failReason", "notInTable")
 			return result
@@ -160,14 +151,10 @@ class WriterIA2TableContentProvider:
 		result["columnNumber"] = columnNumber
 
 		result["rowHeaderText"] = (
-			cellInfo.get("rowHeaderText", "")
-			or cellInfo.get("table-rowheadertext", "")
-			or ""
+			cellInfo.get("rowHeaderText", "") or cellInfo.get("table-rowheadertext", "") or ""
 		)
 		result["columnHeaderText"] = (
-			cellInfo.get("columnHeaderText", "")
-			or cellInfo.get("table-columnheadertext", "")
-			or ""
+			cellInfo.get("columnHeaderText", "") or cellInfo.get("table-columnheadertext", "") or ""
 		)
 
 		hiddenResult = self._isHiddenOrInvisibleCell(cellObj)
@@ -197,18 +184,15 @@ class WriterIA2TableContentProvider:
 			"ok": False,
 			"failStage": "",
 			"failReason": "",
-
 			"tableID": tableContext.get("tableID", ""),
 			"rowNumber": rowNumber,
 			"nColumns": tableContext.get("nColumns"),
-
 			"cells": [],
 			"cellCount": 0,
 			"texts": [],
 			"combinedText": "",
 			"cellOrder": "leftToRight",
 			"partial": False,
-
 			"missingColumns": "",
 			"textExtractionFailureCount": 0,
 			"textExtractionFailureCoordinates": "",
@@ -247,7 +231,7 @@ class WriterIA2TableContentProvider:
 		result["partial"] = bool(missingColumns)
 		result["textExtractionFailureCount"] = len(textFailureCoordinates)
 		result["textExtractionFailureCoordinates"] = ";".join(
-			textFailureCoordinates
+			textFailureCoordinates,
 		)
 
 		result["ok"] = not result["partial"]
@@ -270,18 +254,15 @@ class WriterIA2TableContentProvider:
 			"ok": False,
 			"failStage": "",
 			"failReason": "",
-
 			"tableID": tableContext.get("tableID", ""),
 			"columnNumber": columnNumber,
 			"nRows": tableContext.get("nRows"),
-
 			"cells": [],
 			"cellCount": 0,
 			"texts": [],
 			"combinedText": "",
 			"cellOrder": "topToBottom",
 			"partial": False,
-
 			"missingRows": "",
 			"textExtractionFailureCount": 0,
 			"textExtractionFailureCoordinates": "",
@@ -320,7 +301,7 @@ class WriterIA2TableContentProvider:
 		result["partial"] = bool(missingRows)
 		result["textExtractionFailureCount"] = len(textFailureCoordinates)
 		result["textExtractionFailureCoordinates"] = ";".join(
-			textFailureCoordinates
+			textFailureCoordinates,
 		)
 
 		result["ok"] = not result["partial"]
@@ -418,10 +399,7 @@ class WriterIA2TableContentProvider:
 			}
 
 		coordinates = sorted(cellMap.keys())
-		coordinateText = ";".join(
-			f"{row},{column}"
-			for row, column in coordinates
-		)
+		coordinateText = ";".join(f"{row},{column}" for row, column in coordinates)
 
 		result = {
 			"ok": bool(cellMap),
@@ -474,10 +452,7 @@ class WriterIA2TableContentProvider:
 			except Exception:
 				continue
 
-			if (
-				startRow <= rowNumber <= endRow
-				and startColumn <= columnNumber <= endColumn
-			):
+			if startRow <= rowNumber <= endRow and startColumn <= columnNumber <= endColumn:
 				return {
 					"ok": True,
 					"entry": entry,
@@ -530,7 +505,6 @@ class WriterIA2TableContentProvider:
 			"ok": False,
 			"failStage": "",
 			"failReason": "",
-
 			"tableID": tableContext.get("tableID", ""),
 			"rowNumber": rowNumber,
 			"columnNumber": columnNumber,
@@ -538,26 +512,21 @@ class WriterIA2TableContentProvider:
 			"columnSpan": 1,
 			"rowEndNumber": rowNumber,
 			"columnEndNumber": columnNumber,
-
 			"rowHeaderText": "",
 			"columnHeaderText": "",
-
 			"cellObjExists": False,
 			"cellObjClass": "",
 			"cellObjModule": "",
 			"cellObjIA2UniqueID": None,
-
 			"text": "",
 			"textLength": 0,
 			"textSource": "",
 			"textMakeOk": False,
 			"textFailReason": "",
-
 			"empty": False,
 			"coveredByMergedCell": False,
 			"sourceRowNumber": rowNumber,
 			"sourceColumnNumber": columnNumber,
-
 			"hidden": False,
 			"hiddenReason": "",
 		}
@@ -715,9 +684,7 @@ class WriterIA2TableContentProvider:
 		cellInfo: dict,
 	) -> None:
 		result["tableID"] = (
-			cellInfo.get("tableID", "")
-			or cellInfo.get("tableId", "")
-			or result.get("tableID", "")
+			cellInfo.get("tableID", "") or cellInfo.get("tableId", "") or result.get("tableID", "")
 		)
 
 		rowNumber = self._asInt(
@@ -823,6 +790,7 @@ class WriterIA2TableContentProvider:
 
 		try:
 			import textInfos
+
 			info = cellObj.makeTextInfo(textInfos.POSITION_ALL)
 			text = info.text
 			if text is None:

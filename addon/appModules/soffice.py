@@ -1,25 +1,25 @@
+import addonHandler
+import builtins
 import api
 import config
-import speech
 import core
 import scriptHandler
+import speech
 import textInfos
 import ui
 
-import builtins
-_nvdaCoreGettext = builtins._
-
-import addonHandler
-addonHandler.initTranslation()
-
 from .writerTableNavCore import WriterIA2TableNavigator
 from nvdaBuiltin.appModules import soffice as builtinSoffice
+
+_nvdaCoreGettext = builtins._
+addonHandler.initTranslation()
 
 _TABLE_SPEECH_ORDER = "contentThenCell"
 _TABLE_SPEECH_DELAY_MS = 200
 
 # Translators: command category for the add-on.
 SCRCAT_WRITER_IA2_TABLE = _("Writer IA2 Table Navigation")
+
 
 class AppModule(builtinSoffice.AppModule):
 	"""Minimal LibreOffice Writer alpha AppModule entry."""
@@ -88,8 +88,7 @@ class AppModule(builtinSoffice.AppModule):
 		try:
 			treeInterceptor = getattr(targetObj, "treeInterceptor", None)
 			syncResult["symphonyDocumentDetected"] = (
-				treeInterceptor is not None
-				and treeInterceptor.__class__.__name__ == "SymphonyDocument"
+				treeInterceptor is not None and treeInterceptor.__class__.__name__ == "SymphonyDocument"
 			)
 		except Exception:
 			syncResult["symphonyDocumentDetected"] = False
@@ -138,10 +137,9 @@ class AppModule(builtinSoffice.AppModule):
 				apiFocusContext = navigator.getContextFromObject(apiFocusObj)
 				apiFocusRowIndex = apiFocusContext.get("rowIndex")
 				apiFocusColumnIndex = apiFocusContext.get("columnIndex")
-				apiFocusMatchesTarget = (
-					apiFocusRowIndex == result.get("targetRow")
-					and apiFocusColumnIndex == result.get("targetColumn")
-				)
+				apiFocusMatchesTarget = apiFocusRowIndex == result.get(
+					"targetRow",
+				) and apiFocusColumnIndex == result.get("targetColumn")
 		except Exception:
 			apiFocusMatchesTarget = False
 			apiFocusRowIndex = None
@@ -155,8 +153,7 @@ class AppModule(builtinSoffice.AppModule):
 		result["apiFocusColumnIndex"] = apiFocusColumnIndex
 
 		syncResult["ok"] = bool(
-			syncResult.get("focusSetOk")
-			and syncResult.get("speechOk")
+			syncResult.get("focusSetOk") and syncResult.get("speechOk"),
 		)
 		if syncResult["ok"]:
 			syncResult["reason"] = "synced"
@@ -284,7 +281,6 @@ class AppModule(builtinSoffice.AppModule):
 
 		return " ".join(item for item in sequence if isinstance(item, str)).strip()
 
-
 	def _formatWriterIA2TableSpeech(
 		self,
 		contentText: str,
@@ -320,9 +316,6 @@ class AppModule(builtinSoffice.AppModule):
 			return f"{contentText}, {coordinateText}"
 
 		return contentText or coordinateText or fallbackText
-
-
-
 
 	def _finishWriterIA2TableSymphonySpeech(
 		self,
@@ -380,8 +373,6 @@ class AppModule(builtinSoffice.AppModule):
 		except Exception:
 			pass
 
-
-
 	def _getWriterIA2TableNavigator(self) -> WriterIA2TableNavigator:
 		"""Return the persistent Writer IA2 table navigator for this AppModule."""
 		navigator = getattr(
@@ -395,7 +386,6 @@ class AppModule(builtinSoffice.AppModule):
 			self._writerIA2TableNavigator = navigator
 
 		return navigator
-
 
 	def _moveWriterIA2TableCell(self, direction: str) -> None:
 		"""Move to a nearby Writer table cell through IA2."""
@@ -461,7 +451,7 @@ class AppModule(builtinSoffice.AppModule):
 				"failReason": result.get("failReason", ""),
 			}
 			ui.message(
-				_nvdaCoreGettext("Edge of table")
+				_nvdaCoreGettext("Edge of table"),
 			)
 			return
 
@@ -543,17 +533,17 @@ class AppModule(builtinSoffice.AppModule):
 			textInfo,
 			enabled=enabled,
 		)
-		result.update({
-			"ok": bool(installResult.get("ok")),
-			"alreadyInstalled": bool(installResult.get("alreadyInstalled", False)),
-			"installed": bool(installResult.get("installed", False)),
-			"enabled": bool(installResult.get("enabled", False)),
-			"failReason": installResult.get("failReason", ""),
-		})
+		result.update(
+			{
+				"ok": bool(installResult.get("ok")),
+				"alreadyInstalled": bool(installResult.get("alreadyInstalled", False)),
+				"installed": bool(installResult.get("installed", False)),
+				"enabled": bool(installResult.get("enabled", False)),
+				"failReason": installResult.get("failReason", ""),
+			},
+		)
 		result["canProceed"] = bool(
-			result.get("textInfoMakeOk")
-			and result.get("installed")
-			and not result.get("failReason")
+			result.get("textInfoMakeOk") and result.get("installed") and not result.get("failReason"),
 		)
 		return result
 
@@ -571,13 +561,9 @@ class AppModule(builtinSoffice.AppModule):
 			WriterTableBrailleCollapsedChunkPatchManager,
 		)
 
-		manager = (
-			WriterTableBrailleCollapsedChunkPatchManager()
-		)
+		manager = WriterTableBrailleCollapsedChunkPatchManager()
 
-		self._writerTableBrailleCollapsedChunkPatchManager = (
-			manager
-		)
+		self._writerTableBrailleCollapsedChunkPatchManager = manager
 
 		return manager
 
@@ -589,7 +575,7 @@ class AppModule(builtinSoffice.AppModule):
 				self,
 				"_writerTableBrailleCollapsedChunkPatchEnabled",
 				False,
-			)
+			),
 		)
 
 		if not enabled:
@@ -600,9 +586,7 @@ class AppModule(builtinSoffice.AppModule):
 				"failReason": "",
 			}
 
-		manager = (
-			self._getWriterTableBrailleCollapsedChunkPatchManager()
-		)
+		manager = self._getWriterTableBrailleCollapsedChunkPatchManager()
 
 		manager.setEnabled(True)
 
@@ -611,13 +595,13 @@ class AppModule(builtinSoffice.AppModule):
 		return {
 			"ok": bool(result.get("ok")),
 			"installed": bool(
-				result.get("installed")
+				result.get("installed"),
 			),
 			"alreadyInstalled": bool(
 				result.get(
 					"alreadyInstalled",
 					False,
-				)
+				),
 			),
 			"enabled": manager.isEnabled(),
 			"failReason": result.get(
@@ -671,7 +655,7 @@ class AppModule(builtinSoffice.AppModule):
 				result.get(
 					"alreadyRestored",
 					False,
-				)
+				),
 			),
 			"released": released,
 			"failReason": "",
@@ -753,8 +737,7 @@ class AppModule(builtinSoffice.AppModule):
 					"alreadyInstalled": False,
 					"installed": manager.isInstalled(),
 					"enabled": manager.isEnabled(),
-					"failReason": "restoreBeforeReinstallFailed:%s"
-					% restoreResult.get("failReason", ""),
+					"failReason": "restoreBeforeReinstallFailed:%s" % restoreResult.get("failReason", ""),
 				}
 
 		return {
@@ -765,7 +748,11 @@ class AppModule(builtinSoffice.AppModule):
 			"failReason": result.get("failReason", ""),
 		}
 
-	def _lazyInstallWriterIA2TableTextInfoPatchManagerForTextInfo(self, textInfo, enabled=None) -> dict[str, object]:
+	def _lazyInstallWriterIA2TableTextInfoPatchManagerForTextInfo(
+		self,
+		textInfo,
+		enabled=None,
+	) -> dict[str, object]:
 		"""Install the Writer IA2 table TextInfo patch only after a TextInfo exists.
 
 		This keeps import/init paths inert. The default feature flag remains off
@@ -837,9 +824,7 @@ class AppModule(builtinSoffice.AppModule):
 	def terminate(self):
 		"""Restore Writer-specific patches before AppModule shutdown."""
 		try:
-			textInfoRestoreResult = (
-				self._restoreWriterIA2TableTextInfoPatchManager()
-			)
+			textInfoRestoreResult = self._restoreWriterIA2TableTextInfoPatchManager()
 
 			if not textInfoRestoreResult.get("ok"):
 				try:
@@ -850,16 +835,14 @@ class AppModule(builtinSoffice.AppModule):
 						% textInfoRestoreResult.get(
 							"failReason",
 							"",
-						)
+						),
 					)
 				except Exception:
 					pass
 
 		finally:
 			try:
-				brailleRestoreResult = (
-					self._restoreWriterTableBrailleCollapsedChunkPatchManager()
-				)
+				brailleRestoreResult = self._restoreWriterTableBrailleCollapsedChunkPatchManager()
 
 				if not brailleRestoreResult.get("ok"):
 					try:
@@ -870,7 +853,7 @@ class AppModule(builtinSoffice.AppModule):
 							% brailleRestoreResult.get(
 								"failReason",
 								"",
-							)
+							),
 						)
 					except Exception:
 						pass
@@ -979,7 +962,7 @@ class AppModule(builtinSoffice.AppModule):
 		from .writerIA2TableSayAll import WriterIA2TableSayAllHandler
 
 		result = WriterIA2TableSayAllHandler(updateCaret=True).sayAllRow(
-			api.getFocusObject()
+			api.getFocusObject(),
 		)
 
 		if result.get("ok"):
@@ -1006,7 +989,7 @@ class AppModule(builtinSoffice.AppModule):
 		from .writerIA2TableSayAll import WriterIA2TableSayAllHandler
 
 		result = WriterIA2TableSayAllHandler(updateCaret=True).sayAllColumn(
-			api.getFocusObject()
+			api.getFocusObject(),
 		)
 
 		if result.get("ok"):
@@ -1072,8 +1055,6 @@ class AppModule(builtinSoffice.AppModule):
 			return
 
 		ui.message(result.get("message", ""))
-
-
 
 	__gestures = {
 		"kb:control+alt+r": "sayAllWriterTableRow",

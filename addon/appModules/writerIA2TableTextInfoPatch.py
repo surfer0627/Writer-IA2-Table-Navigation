@@ -71,7 +71,7 @@ class WriterIA2TableTextInfoPatchManager:
 
 		try:
 			patchedGetTextWithFields = self._makePatchedGetTextWithFields(
-				originalGetTextWithFields
+				originalGetTextWithFields,
 			)
 			setattr(textInfoClass, "getTextWithFields", patchedGetTextWithFields)
 
@@ -131,6 +131,7 @@ class WriterIA2TableTextInfoPatchManager:
 				manager.lastException = repr(e)
 				try:
 					from logHandler import log
+
 					log.debugWarning(
 						"Writer IA2 table TextInfo patch failed; returning native stream",
 						exc_info=True,
@@ -138,7 +139,6 @@ class WriterIA2TableTextInfoPatchManager:
 				except Exception:
 					pass
 				return nativeStream
-
 
 		return patchedGetTextWithFields
 
@@ -150,7 +150,6 @@ class WriterIA2TableTextInfoPatchManager:
 		except Exception:
 			pass
 		return ""
-
 
 	def restore(self) -> dict[str, object]:
 		if not self._installed:
@@ -224,7 +223,7 @@ class WriterIA2TableTextInfoPatchManager:
 			return bool(
 				field.get("table-id")
 				and field.get("table-rownumber") is None
-				and field.get("table-columnnumber") is None
+				and field.get("table-columnnumber") is None,
 			)
 		except Exception:
 			return False
@@ -237,7 +236,7 @@ class WriterIA2TableTextInfoPatchManager:
 			return bool(
 				field.get("table-id")
 				and field.get("table-rownumber") is not None
-				and field.get("table-columnnumber") is not None
+				and field.get("table-columnnumber") is not None,
 			)
 		except Exception:
 			return False
@@ -350,10 +349,7 @@ class WriterIA2TableTextInfoPatchManager:
 		if className == "SymphonyDocumentTextInfo":
 			return True
 
-		if (
-			className.endswith("DocumentTextInfo")
-			and "soffice" in moduleName
-		):
+		if className.endswith("DocumentTextInfo") and "soffice" in moduleName:
 			return True
 
 		if self._isCalledFromDocumentTextInfo(textInfo):
@@ -377,6 +373,7 @@ class WriterIA2TableTextInfoPatchManager:
 		"""
 		try:
 			import sys
+
 			frame = sys._getframe()
 		except Exception:
 			return False
@@ -402,10 +399,7 @@ class WriterIA2TableTextInfoPatchManager:
 				if className == "SymphonyDocumentTextInfo":
 					return True
 
-				if (
-					className.endswith("DocumentTextInfo")
-					and "soffice" in moduleName
-				):
+				if className.endswith("DocumentTextInfo") and "soffice" in moduleName:
 					return True
 
 			frame = frame.f_back
@@ -451,7 +445,6 @@ class WriterIA2TableTextInfoPatchManager:
 			return True, stream
 		except Exception:
 			return False, nativeStream
-
 
 	def _getCandidateForTextInfo(self, textInfo: object) -> dict[str, object]:
 		try:

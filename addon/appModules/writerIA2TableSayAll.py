@@ -15,6 +15,7 @@ from __future__ import annotations
 
 DEBUG_ENABLE_WRITER_SAYALL_LANDING_FALLBACK = False
 
+
 class WriterIA2SayAllTableTextInfoWrapper:
 	"""TextInfo wrapper that injects Writer IA2 table fields for SayAll.
 
@@ -97,7 +98,7 @@ class WriterIA2SayAllTableTextInfoWrapper:
 			self._innerInfo.getTextWithFields(
 				*args,
 				**kwargs,
-			)
+			),
 		)
 
 		return WriterIA2TableFieldBuilder().injectTableFieldsIntoFieldStream(
@@ -353,6 +354,7 @@ class WriterIA2EmptyCellSayAllTextInfo:
 	):
 		return 0
 
+
 class WriterIA2MultiChildCellTextInfo:
 	"""TextInfo wrapper for a Writer table cell with multiple paragraph children.
 
@@ -366,16 +368,10 @@ class WriterIA2MultiChildCellTextInfo:
 		self,
 		childInfos: list,
 	):
-		self._childInfos = [
-			info for info in childInfos
-			if info is not None
-		]
+		self._childInfos = [info for info in childInfos if info is not None]
 
 	def __repr__(self):
-		return (
-			f"<WriterIA2MultiChildCellTextInfo "
-			f"childCount={len(self._childInfos)}>"
-		)
+		return f"<WriterIA2MultiChildCellTextInfo childCount={len(self._childInfos)}>"
 
 	def __getattr__(self, name: str):
 		firstInfo = self._getFirstInfo()
@@ -514,6 +510,7 @@ class WriterIA2MultiChildCellTextInfo:
 			return 0
 		return firstInfo.compareEndPoints(*args, **kwargs)
 
+
 class WriterIA2TableSayAllHandler:
 	"""Run SayAll row / column for Writer IA2 tables."""
 
@@ -581,7 +578,7 @@ class WriterIA2TableSayAllHandler:
 		result["cellMapCandidateCount"] = cellMapResult.get("candidateCount", 0)
 		result["cellMapMappedCellCount"] = cellMapResult.get("mappedCellCount", 0)
 		result["cellMapDuplicateCoordinateDetected"] = bool(
-			cellMapResult.get("duplicateCoordinateDetected")
+			cellMapResult.get("duplicateCoordinateDetected"),
 		)
 		result["cellMapDuplicateCoordinates"] = cellMapResult.get(
 			"duplicateCoordinates",
@@ -647,7 +644,6 @@ class WriterIA2TableSayAllHandler:
 		result["message"] = ""
 		return result
 
-
 	def _getProvider(
 		self,
 	) -> object | None:
@@ -674,11 +670,9 @@ class WriterIA2TableSayAllHandler:
 			"failStage": "",
 			"failReason": "",
 			"message": "",
-
 			"tableContextMakeOk": False,
 			"tableContextFailStage": "",
 			"tableContextFailReason": "",
-
 			"tableID": "",
 			"tableIDExists": False,
 			"rowNumber": None,
@@ -689,14 +683,12 @@ class WriterIA2TableSayAllHandler:
 			"columnEndNumber": None,
 			"nRows": None,
 			"nColumns": None,
-
 			"cellMapBuildOk": False,
 			"cellMapFailReason": "",
 			"cellMapCandidateCount": 0,
 			"cellMapMappedCellCount": 0,
 			"cellMapDuplicateCoordinateDetected": False,
 			"cellMapDuplicateCoordinates": "",
-
 			"sequenceOk": False,
 			"sequenceFailReason": "",
 			"startRow": None,
@@ -716,7 +708,6 @@ class WriterIA2TableSayAllHandler:
 			"hiddenCellCount": 0,
 			"coveredCellCount": 0,
 			"startIsCurrentCell": False,
-
 			"sayAllImportOk": False,
 			"sayAllImportException": "",
 			"sayAllCursorTableExists": False,
@@ -815,7 +806,7 @@ class WriterIA2TableSayAllHandler:
 					rawEntry,
 					rowNumber,
 					columnNumber,
-				)
+				),
 			)
 
 		startIsCurrent = (
@@ -907,7 +898,7 @@ class WriterIA2TableSayAllHandler:
 					rawEntry,
 					rowNumber,
 					columnNumber,
-				)
+				),
 			)
 
 		startIsCurrent = (
@@ -1064,28 +1055,6 @@ class WriterIA2TableSayAllHandler:
 		entry["textInfoDiagnosticOk"] = entry["textInfoMakeOk"]
 		return entry
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 	def _landingBeforeReadTextInfoHasText(
 		self,
 		textInfoResult: dict | None,
@@ -1105,7 +1074,6 @@ class WriterIA2TableSayAllHandler:
 
 		return bool(text)
 
-
 	def _tryLandingBeforeReadFocus(
 		self,
 		label: str,
@@ -1114,20 +1082,16 @@ class WriterIA2TableSayAllHandler:
 		if obj is None:
 			return
 
-		setFocusOk = False
 		try:
 			obj.setFocus()
-			setFocusOk = True
-		except Exception as e:
+		except Exception:
 			pass
 
-		apiSetFocusOk = False
 		try:
 			import api
 
 			api.setFocusObject(obj)
-			apiSetFocusOk = True
-		except Exception as e:
+		except Exception:
 			pass
 
 	def _makeEmptyCellSayAllTextInfoResult(
@@ -1230,7 +1194,6 @@ class WriterIA2TableSayAllHandler:
 		entry: dict,
 		beforeTextInfoResult: dict | None = None,
 	) -> dict:
-
 		entry = entry or {}
 		for name in (
 			"rowNumber",
@@ -1269,10 +1232,7 @@ class WriterIA2TableSayAllHandler:
 			entry,
 		)
 
-		if (
-			afterCellLanding.get("ok")
-			and self._landingBeforeReadTextInfoHasText(afterCellLanding)
-		):
+		if afterCellLanding.get("ok") and self._landingBeforeReadTextInfoHasText(afterCellLanding):
 			return afterCellLanding
 
 		try:
@@ -1290,19 +1250,12 @@ class WriterIA2TableSayAllHandler:
 			entry,
 		)
 
-		if (
-			afterChildLanding.get("ok")
-			and self._landingBeforeReadTextInfoHasText(afterChildLanding)
-		):
+		if afterChildLanding.get("ok") and self._landingBeforeReadTextInfoHasText(afterChildLanding):
 			return afterChildLanding
 
 		fallbackReason = "emptyOrNoUsableText"
 
-		if (
-			not original.get("ok")
-			and not afterCellLanding.get("ok")
-			and not afterChildLanding.get("ok")
-		):
+		if not original.get("ok") and not afterCellLanding.get("ok") and not afterChildLanding.get("ok"):
 			fallbackReason = "makeTextInfoFailed"
 		elif (
 			not original.get("text")
@@ -1377,8 +1330,8 @@ class WriterIA2TableSayAllHandler:
 					"rowNumber": startEntry.get("rowNumber"),
 					"columnNumber": startEntry.get("columnNumber"),
 					"info": startPos,
-				}
-			]
+				},
+			],
 		)
 
 		result["runtimeTextInfoContractOk"] = bool(runtimeCheck.get("ok"))
@@ -1429,7 +1382,6 @@ class WriterIA2TableSayAllHandler:
 			result["failReason"] = f"readTextFailed:{repr(e)}"
 			result["message"] = "Unable to read row"
 			return result
-
 
 		result["ok"] = True
 		result["readTextCalled"] = True
@@ -1682,9 +1634,7 @@ class WriterIA2TableSayAllHandler:
 
 		result["failStage"] = "makeTextInfo"
 		result["failReason"] = (
-			direct.get("failReason", "")
-			or childResult.get("failReason", "")
-			or "makeTextInfoFailed"
+			direct.get("failReason", "") or childResult.get("failReason", "") or "makeTextInfoFailed"
 		)
 		return result
 
@@ -1833,8 +1783,6 @@ class WriterIA2TableSayAllHandler:
 		result["textInfoSource"] = "multiChildCellTextInfo:" + ",".join(childSources)
 		return result
 
-
-
 	def _getFirstChild(
 		self,
 		obj,
@@ -1924,16 +1872,14 @@ class WriterIA2TableSayAllHandler:
 						"coordinate": coordinate,
 						"failStage": check.get("failStage", ""),
 						"failReason": check.get("failReason", ""),
-					}
+					},
 				)
 
 		if failures:
 			return {
 				"ok": False,
 				"failureCount": len(failures),
-				"failureCoordinates": ";".join(
-					failure.get("coordinate", "") for failure in failures
-				),
+				"failureCoordinates": ";".join(failure.get("coordinate", "") for failure in failures),
 				"failureReasons": ";".join(
 					(
 						f"{failure.get('coordinate', '')}:"
@@ -2280,10 +2226,10 @@ class WriterIA2TableSayAllHandler:
 
 		for entry in entries:
 			coordinates.append(
-				f"{entry.get('rowNumber')},{entry.get('columnNumber')}"
+				f"{entry.get('rowNumber')},{entry.get('columnNumber')}",
 			)
 			sourceCoordinates.append(
-				f"{entry.get('sourceRowNumber')},{entry.get('sourceColumnNumber')}"
+				f"{entry.get('sourceRowNumber')},{entry.get('sourceColumnNumber')}",
 			)
 			texts.append(entry.get("text", ""))
 			sources.append(entry.get("textInfoSource", ""))
@@ -2320,11 +2266,11 @@ class WriterIA2TableSayAllHandler:
 		result["sayAllImportOk"] = bool(sayAllResult.get("sayAllImportOk"))
 		result["sayAllImportException"] = sayAllResult.get("sayAllImportException", "")
 		result["sayAllCursorTableExists"] = bool(
-			sayAllResult.get("sayAllCursorTableExists")
+			sayAllResult.get("sayAllCursorTableExists"),
 		)
 		result["sayAllHandlerExists"] = bool(sayAllResult.get("sayAllHandlerExists"))
 		result["sayAllReadTextExists"] = bool(
-			sayAllResult.get("sayAllReadTextExists")
+			sayAllResult.get("sayAllReadTextExists"),
 		)
 		result["sayAllCalled"] = bool(sayAllResult.get("sayAllCalled"))
 		result["sayAllCursorIsTable"] = bool(sayAllResult.get("sayAllCursorIsTable"))
@@ -2333,7 +2279,7 @@ class WriterIA2TableSayAllHandler:
 		result["startTextInfoClass"] = sayAllResult.get("startTextInfoClass", "")
 		result["startTextInfoModule"] = sayAllResult.get("startTextInfoModule", "")
 		result["nextLineFuncProvided"] = bool(
-			sayAllResult.get("nextLineFuncProvided")
+			sayAllResult.get("nextLineFuncProvided"),
 		)
 		result["shouldUpdateCaret"] = sayAllResult.get("shouldUpdateCaret")
 		result["startedFromScript"] = bool(sayAllResult.get("startedFromScript"))
@@ -2431,9 +2377,7 @@ class WriterIA2TableSayAllHandler:
 		while child is not None and index < 20:
 			textInfoResult = self._makeTextInfoWithoutChildScan(child)
 			if textInfoResult.get("ok"):
-				textInfoResult["textInfoSource"] = (
-					"child:" + textInfoResult.get("textInfoSource", "")
-				)
+				textInfoResult["textInfoSource"] = "child:" + textInfoResult.get("textInfoSource", "")
 				return textInfoResult
 
 			lastFailReason = textInfoResult.get("failReason", "")
