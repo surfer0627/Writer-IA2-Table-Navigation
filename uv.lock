@@ -3,7 +3,7 @@ revision = 3
 requires-python = "==3.13.*"
 
 [[package]]
-name = "addontemplate"
+name = "writer-ia2-table-navigation"
 source = { editable = "." }
 dependencies = [
     { name = "crowdin-api-client" },

@@ -27,18 +27,18 @@ addon_info = AddonInfo(
 
 	# Add-on description
 	# Translators: Long description to be shown for this add-on on add-on information from add-on store
-	addon_description=_("""Experimental proof of concept for IA2-based table cell navigation in LibreOffice Writer.
+	addon_description=_("""Experimental IA2-based table navigation and reading commands for LibreOffice Writer.
 
 This add-on is intended for testing NVDA issue #4133. It is not an official NVDA build and not a final fix."""),
 
 	# version
-	addon_version="0.1.0",
+	addon_version="0.2.0",
 
 	# Brief changelog for this version
 	# Translators: what's new content for the add-on version to be shown in the add-on store
-	addon_changelog=_("""Initial experimental alpha release.
+	addon_changelog=_("""Adds first and last row or column movement, current row and column reading, and row and column Say All.
 
-Implements IA2-based table cell navigation in LibreOffice Writer using control+alt+arrow keys. Speech and braille behavior are experimental."""),
+Improves merged-cell target resolution, TextInfo table fields, and braille output for collapsed Writer text chunks."""),
 
 	# Author(s)
 	addon_author="Victor Tsai <surfer0627@gmail.com>",

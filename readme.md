@@ -1,93 +1,80 @@
 # Writer IA2 Table Navigation
 
-Writer IA2 Table Navigation is an experimental NVDA add-on proof of concept for IA2-based table cell navigation in LibreOffice Writer on Windows.
+Writer IA2 Table Navigation is an experimental NVDA add-on for navigating and reading tables in LibreOffice Writer on Windows through IAccessible2 (IA2).
 
-This project is intended to help test a possible approach for [nvaccess/nvda#4133](https://github.com/nvaccess/nvda/issues/4133).
+This project explores a possible approach for [nvaccess/nvda#4133](https://github.com/nvaccess/nvda/issues/4133). It is not an official NVDA build or a final fix in NVDA core.
 
-This is not an official NVDA build and not a final fix.
+## Requirements
 
+- Windows
+- NVDA 2025.3 or later
+- LibreOffice Writer
+
+The add-on metadata currently declares NVDA 2026.1 as the latest tested version.
 
 ## Commands
 
-When the cursor is inside a LibreOffice Writer table, the add-on provides these commands:
+The following commands are available when the cursor is inside a LibreOffice Writer table:
 
 | Command | Action |
 | --- | --- |
-| control+alt+leftArrow | Move to the previous table cell in the row |
-| control+alt+rightArrow | Move to the next table cell in the row |
-| control+alt+upArrow | Move to the previous table cell in the column |
-| control+alt+downArrow | Move to the next table cell in the column |
-
-
+| `control+alt+leftArrow` | Move to the previous column |
+| `control+alt+rightArrow` | Move to the next column |
+| `control+alt+upArrow` | Move to the previous row |
+| `control+alt+downArrow` | Move to the next row |
+| `control+alt+pageUp` | Move to the first row |
+| `control+alt+pageDown` | Move to the last row |
+| `control+alt+home` | Move to the first column |
+| `control+alt+end` | Move to the last column |
+| `NVDA+control+alt+downArrow` | Read from the current cell to the end of the row with Say All |
+| `NVDA+control+alt+rightArrow` | Read from the current cell to the end of the column with Say All |
+| `NVDA+control+alt+leftArrow` | Read the complete current row without moving the system caret |
+| `NVDA+control+alt+upArrow` | Read the complete current column without moving the system caret |
+| `control+alt+r` | Alias for row Say All |
+| `control+alt+c` | Alias for column Say All |
 
 ## Technical approach
 
-The prototype currently follows this route:
+The add-on separates Writer table support into focused layers:
 
-1. Resolve the current LibreOffice Writer table cell from the focused Symphony paragraph.
-2. Use IAccessibleTableCell and IAccessibleTable2 to get the current row and column.
-3. Use IAccessibleTable2.cellAt(row, column) to resolve the target cell.
-4. Move focus to the target SymphonyIATableCell.
-5. Let LibreOffice and NVDA naturally move focus into the cell's Symphony paragraph.
-6. Use the naturally focused paragraph for speech and braille.
+1. Resolve the focused Writer table, cell coordinates, spans, and IA2 table interfaces.
+2. Cache direct coordinate-to-cell mappings and account for merged cells when resolving movement targets.
+3. Move focus to the target `SymphonyIATableCell` and use the naturally focused Writer text object for speech and braille.
+4. Build reusable row and column content sequences for direct reading and Say All.
+5. Adapt table and cell properties to NVDA TextInfo control fields.
+6. Apply a Writer-specific collapsed-chunk workaround so braille can retain table field information.
 
-The add-on avoids speaking the SymphonyIATableCell object directly. The cell object is used for table coordinates and movement, while the focused paragraph is used for text content.
+The TextInfo field injection manager is available but disabled by default. The collapsed braille workaround is enabled only through the LibreOffice AppModule and restores the original NVDA methods when the AppModule terminates.
 
-### Current findings
+## Known limitations
 
-Early testing suggests that:
-
-* SymphonyIATableCell can provide table cell coordinates.
-* IAccessibleTable2.cellAt(row, column) can resolve target cells.
-* After focusing a target table cell, LibreOffice and NVDA naturally move focus into the cell's Symphony paragraph.
-* The Symphony paragraph provides the cell text through SymphonyTextInfo.
-* Braille follows the naturally focused paragraph.
-* Directly speaking or braille-routing the SymphonyIATableCell object can produce incorrect or duplicated output, so the prototype avoids that route.
-
-### Known limitations
-
-Known limitations include:
-
-* LibreOffice Writer only.
-* Windows only.
-* OpenOffice is not yet tested.
-* Empty cells may need fallback handling.
-* Merged cells are not fully validated.
-* This add-on does not implement browse mode quick navigation.
-* This add-on does not implement table say-all commands.
+- LibreOffice Writer and Windows only.
+- OpenOffice has not been tested.
+- Empty, merged, vertically spanned, and multi-paragraph cells have dedicated handling but still need broad document testing.
+- Browse mode table quick navigation is not implemented.
+- The add-on depends on internal NVDA and LibreOffice accessibility behavior and may require updates when either project changes.
+- This remains an experimental development-channel add-on.
 
 ## Testing
 
-Useful testing information includes:
+When reporting a problem, include:
 
-* NVDA version.
-* LibreOffice or OpenOffice version.
-* Windows version.
-* Whether speech reports the expected cell content.
-* Whether braille follows the expected cell content.
-* Whether moving left, right, up, and down works.
-* Whether edge-of-table reporting works.
-* Whether the command correctly reports when it is not inside a table cell.
-* Whether empty cells or merged cells behave incorrectly.
+- NVDA version.
+- LibreOffice version.
+- Windows version.
+- The command used and the expected cell or text.
+- Whether speech, braille, focus, and the system caret reached the expected location.
+- Whether the table contains empty, merged, spanned, or multi-paragraph cells.
 
-Useful test documents include:
-
-* A simple table without merged cells.
-* A table with empty cells.
-* A table with horizontally merged cells.
-* A table with vertically merged cells.
-* A table with both row and column spans.
-* A table containing multiple paragraphs in a cell.
+Useful test documents include simple tables, empty cells, horizontal and vertical merges, mixed row and column spans, and cells containing multiple paragraphs.
 
 ## Building
 
-This project is based on the NVDA add-on template.
-
-After installing the required build dependencies, build the add-on from the repository root with:
+Install the locked development dependencies and build from the repository root:
 
 ```cmd
-scons
+uv sync
+uv run scons
 ```
 
-The generated `.nvda-addon` file can then be installed in NVDA for testing.
-
+The generated `writerIa2TableNavigation-0.2.0.nvda-addon` file can then be installed in NVDA for testing.
