@@ -6,11 +6,9 @@ This project explores a possible approach for [nvaccess/nvda#4133](https://githu
 
 ## Requirements
 
-- Windows
-- NVDA 2025.3 or later
-- LibreOffice Writer
-
-The add-on metadata currently declares NVDA 2026.1 as the latest tested version.
+* Windows
+* NVDA 2025.3 or later
+* LibreOffice Writer 25.8.0.1 or later.
 
 ## Commands
 
@@ -35,46 +33,65 @@ The following commands are available when the cursor is inside a LibreOffice Wri
 
 ## Technical approach
 
-The add-on separates Writer table support into focused layers:
+The prototype currently follows this route:
 
-1. Resolve the focused Writer table, cell coordinates, spans, and IA2 table interfaces.
-2. Cache direct coordinate-to-cell mappings and account for merged cells when resolving movement targets.
-3. Move focus to the target `SymphonyIATableCell` and use the naturally focused Writer text object for speech and braille.
-4. Build reusable row and column content sequences for direct reading and Say All.
-5. Adapt table and cell properties to NVDA TextInfo control fields.
-6. Apply a Writer-specific collapsed-chunk workaround so braille can retain table field information.
+1. Find the current Writer table cell from the focused object.
+2. Use `IAccessibleTableCell` and `IAccessibleTable2` to get the cell position, span, and table size.
+3. Calculate the target row and column.
+4. Find an NVDA table-cell object that covers the target coordinate. The add-on first tries `IAccessibleTable2.cellAt(row, column)`, then uses the cached coordinate map or descendant scanning if needed.
+5. Move focus to the target `SymphonyIATableCell`.
+6. Use Writer's focused text object for speech and the focused Symphony paragraph for braille.
 
-The TextInfo field injection manager is available but disabled by default. The collapsed braille workaround is enabled only through the LibreOffice AppModule and restores the original NVDA methods when the AppModule terminates.
+The `SymphonyIATableCell` is mainly used for table structure and navigation. Cell text is taken from Writer's focused text object instead.
 
 ## Known limitations
 
-- LibreOffice Writer and Windows only.
-- OpenOffice has not been tested.
-- Empty, merged, vertically spanned, and multi-paragraph cells have dedicated handling but still need broad document testing.
-- Browse mode table quick navigation is not implemented.
-- The add-on depends on internal NVDA and LibreOffice accessibility behavior and may require updates when either project changes.
-- This remains an experimental development-channel add-on.
+Known limitations include:
+
+
+* LibreOffice Writer only.
+* Windows only.
+* OpenOffice has not been tested yet.
+* Browse mode table quick navigation is not supported.
+* Merged cells are supported, but more testing is still needed.
+
+### Table Say All integration
+
+In applications where NVDA can navigate directly between table-cell TextInfos,
+native Table Say All can consume each cell's TextInfo directly. In Writer,
+however, the table structure is exposed through IA2 table-cell objects, while
+the cell text is usually exposed through one or more Symphony paragraph
+TextInfos.
+
+The add-on therefore builds its own row or column sequence, creates a fresh
+TextInfo for each cell from the cell object or its paragraph children, injects
+the required table control fields, and supplies a custom next-cell function to
+NVDA's native Say All engine using `CURSOR.TABLE`.
+
+This additional layer connects Writer's IA2 table structure with its text
+content. If Writer provides a direct and reliable TextInfo for each table cell
+in the future, the custom wrappers, fallback handling, and traversal code could
+be simplified.
 
 ## Testing
 
 When reporting a problem, include:
 
-- NVDA version.
-- LibreOffice version.
-- Windows version.
-- The command used and the expected cell or text.
-- Whether speech, braille, focus, and the system caret reached the expected location.
-- Whether the table contains empty, merged, spanned, or multi-paragraph cells.
+* NVDA version.
+* LibreOffice version.
+* Windows version.
+* The command used and the expected cell or text.
+* Whether speech, braille, focus, and the system caret reached the expected location.
+* Whether the table contains empty, merged, spanned, or multi-paragraph cells.
 
 Useful test documents include simple tables, empty cells, horizontal and vertical merges, mixed row and column spans, and cells containing multiple paragraphs.
 
 ## Building
 
-Install the locked development dependencies and build from the repository root:
+This project is based on the NVDA add-on template.
 
-```cmd
-uv sync
-uv run scons
-```
+After installing the required build dependencies, build the add-on from the repository root with:
 
-The generated `writerIa2TableNavigation-0.2.0.nvda-addon` file can then be installed in NVDA for testing.
+	scons
+
+The generated `.nvda-addon` file can then be installed in NVDA for testing.
