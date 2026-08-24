@@ -1,3 +1,9 @@
+# Version 0.3.0 alpha
+
+- Improve current row and column reading by routing them through the Say All table speech path.
+- Current row reading now starts from the first cell of the row without moving the system caret.
+- Current column reading now starts from the first cell of the column without moving the system caret.
+
 # Version 0.2.0
 
 
