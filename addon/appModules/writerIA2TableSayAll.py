@@ -853,9 +853,7 @@ class WriterIA2TableSayAllHandler:
 			and entries[0].get("sourceCoordinate") == currentSource
 		)
 
-		startIsValid = bool(entries) and (
-			startAtFirst or startIsCurrent
-		)
+		startIsValid = bool(entries) and (startAtFirst or startIsCurrent)
 
 		return {
 			"ok": startIsValid,
@@ -951,9 +949,7 @@ class WriterIA2TableSayAllHandler:
 			and entries[0].get("sourceCoordinate") == currentSource
 		)
 
-		startIsValid = bool(entries) and (
-			startAtFirst or startIsCurrent
-		)
+		startIsValid = bool(entries) and (startAtFirst or startIsCurrent)
 
 		return {
 			"ok": startIsValid,

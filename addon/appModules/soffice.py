@@ -1062,7 +1062,6 @@ class AppModule(builtinSoffice.AppModule):
 
 		ui.message(message or "Unable to read column")
 
-
 	__gestures = {
 		"kb:control+alt+r": "sayAllWriterTableRow",
 		"kb:control+alt+c": "sayAllWriterTableColumn",
