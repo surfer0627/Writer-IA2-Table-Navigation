@@ -1012,22 +1012,25 @@ class AppModule(builtinSoffice.AppModule):
 	)
 	def script_readCurrentWriterTableRow(self, gesture):
 		import ui
-		from .writerIA2TableCommands import WriterIA2TableCommandHandler
+		from .writerIA2TableSayAll import WriterIA2TableSayAllHandler
 
-		result = WriterIA2TableCommandHandler().readCurrentRow(api.getFocusObject())
+		result = WriterIA2TableSayAllHandler(
+			updateCaret=False,
+		).speakRow(
+			api.getFocusObject(),
+		)
 
-		if not result.get("ok"):
-			message = result.get("message", "")
-			if message == "Not in a table cell":
-				# Translators: The message reported when a user attempts to use a table movement command
-				# when the cursor is not within a table.
-				ui.message(_("Not in a table cell"))
-				return
-
-			ui.message(message or "Unable to read row")
+		if result.get("ok"):
 			return
 
-		ui.message(result.get("message", ""))
+		message = result.get("message", "")
+		if message == "Not in a table cell":
+			# Translators: The message reported when a user attempts to use a table movement command
+			# when the cursor is not within a table.
+			ui.message(_("Not in a table cell"))
+			return
+
+		ui.message(message or "Unable to read row")
 
 	@scriptHandler.script(
 		description=_nvdaCoreGettext(
@@ -1039,22 +1042,26 @@ class AppModule(builtinSoffice.AppModule):
 	)
 	def script_readCurrentWriterTableColumn(self, gesture):
 		import ui
-		from .writerIA2TableCommands import WriterIA2TableCommandHandler
+		from .writerIA2TableSayAll import WriterIA2TableSayAllHandler
 
-		result = WriterIA2TableCommandHandler().readCurrentColumn(api.getFocusObject())
+		result = WriterIA2TableSayAllHandler(
+			updateCaret=False,
+		).speakColumn(
+			api.getFocusObject(),
+		)
 
-		if not result.get("ok"):
-			message = result.get("message", "")
-			if message == "Not in a table cell":
-				# Translators: The message reported when a user attempts to use a table movement command
-				# when the cursor is not within a table.
-				ui.message(_("Not in a table cell"))
-				return
-
-			ui.message(message or "Unable to read column")
+		if result.get("ok"):
 			return
 
-		ui.message(result.get("message", ""))
+		message = result.get("message", "")
+		if message == "Not in a table cell":
+			# Translators: The message reported when a user attempts to use a table movement command
+			# when the cursor is not within a table.
+			ui.message(_("Not in a table cell"))
+			return
+
+		ui.message(message or "Unable to read column")
+
 
 	__gestures = {
 		"kb:control+alt+r": "sayAllWriterTableRow",
