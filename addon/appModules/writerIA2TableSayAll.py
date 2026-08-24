@@ -544,13 +544,46 @@ class WriterIA2TableSayAllHandler:
 			direction="column",
 		)
 
+	def speakRow(
+		self,
+		focusObj: object,
+	) -> dict:
+		"""Read the complete current row without moving the system caret."""
+		return self._sayAll(
+			focusObj,
+			command="speakRow",
+			direction="row",
+			startAtFirst=True,
+			updateCaret=False,
+		)
+
+	def speakColumn(
+		self,
+		focusObj: object,
+	) -> dict:
+		"""Read the complete current column without moving the system caret."""
+		return self._sayAll(
+			focusObj,
+			command="speakColumn",
+			direction="column",
+			startAtFirst=True,
+			updateCaret=False,
+		)
+
 	def _sayAll(
 		self,
 		focusObj: object,
 		command: str,
 		direction: str,
+		startAtFirst: bool = False,
+		updateCaret: bool | None = None,
 	) -> dict:
+		if updateCaret is None:
+			updateCaret = self._updateCaret
+
 		result = self._makeResult(command, direction)
+		result["startAtFirst"] = startAtFirst
+		result["shouldUpdateCaret"] = updateCaret
 
 		provider = self._getProvider()
 		if provider is None:
@@ -598,12 +631,14 @@ class WriterIA2TableSayAllHandler:
 				provider,
 				tableContext,
 				cellMap,
+				startAtFirst=startAtFirst,
 			)
 		elif direction == "column":
 			sequence = self._buildSayAllColumnSequence(
 				provider,
 				tableContext,
 				cellMap,
+				startAtFirst=startAtFirst,
 			)
 		else:
 			result["failStage"] = "validate"
@@ -631,6 +666,7 @@ class WriterIA2TableSayAllHandler:
 			tableContext,
 			cellMap,
 			entries,
+			updateCaret=updateCaret,
 		)
 		self._fillSayAllResult(result, sayAllResult)
 
@@ -747,10 +783,12 @@ class WriterIA2TableSayAllHandler:
 		provider: object,
 		tableContext: dict,
 		cellMap: dict,
+		startAtFirst: bool = False,
 	) -> dict:
 		try:
 			rowNumber = int(tableContext.get("rowNumber"))
-			startColumn = int(tableContext.get("columnNumber"))
+			currentColumn = int(tableContext.get("columnNumber"))
+			startColumn = 1 if startAtFirst else currentColumn
 			nColumns = int(tableContext.get("nColumns"))
 		except Exception:
 			return {
@@ -763,7 +801,7 @@ class WriterIA2TableSayAllHandler:
 			provider,
 			cellMap,
 			rowNumber,
-			startColumn,
+			currentColumn,
 		)
 
 		entries = []
@@ -815,9 +853,13 @@ class WriterIA2TableSayAllHandler:
 			and entries[0].get("sourceCoordinate") == currentSource
 		)
 
+		startIsValid = bool(entries) and (
+			startAtFirst or startIsCurrent
+		)
+
 		return {
-			"ok": bool(entries) and startIsCurrent,
-			"failReason": "" if bool(entries) and startIsCurrent else "missingStartPos",
+			"ok": startIsValid,
+			"failReason": "" if startIsValid else "missingStartPos",
 			"entries": entries,
 			"startRow": rowNumber,
 			"startColumn": startColumn,
@@ -839,9 +881,11 @@ class WriterIA2TableSayAllHandler:
 		provider: object,
 		tableContext: dict,
 		cellMap: dict,
+		startAtFirst: bool = False,
 	) -> dict:
 		try:
-			startRow = int(tableContext.get("rowNumber"))
+			currentRow = int(tableContext.get("rowNumber"))
+			startRow = 1 if startAtFirst else currentRow
 			columnNumber = int(tableContext.get("columnNumber"))
 			nRows = int(tableContext.get("nRows"))
 		except Exception:
@@ -854,7 +898,7 @@ class WriterIA2TableSayAllHandler:
 		currentSource = self._getCurrentSourceCoordinate(
 			provider,
 			cellMap,
-			startRow,
+			currentRow,
 			columnNumber,
 		)
 
@@ -907,9 +951,13 @@ class WriterIA2TableSayAllHandler:
 			and entries[0].get("sourceCoordinate") == currentSource
 		)
 
+		startIsValid = bool(entries) and (
+			startAtFirst or startIsCurrent
+		)
+
 		return {
-			"ok": bool(entries) and startIsCurrent,
-			"failReason": "" if bool(entries) and startIsCurrent else "missingStartPos",
+			"ok": startIsValid,
+			"failReason": "" if startIsValid else "missingStartPos",
 			"entries": entries,
 			"startRow": startRow,
 			"startColumn": columnNumber,
@@ -1279,6 +1327,7 @@ class WriterIA2TableSayAllHandler:
 		tableContext: dict,
 		cellMap: dict,
 		entries: list,
+		updateCaret: bool,
 	) -> dict:
 		result = {
 			"ok": False,
@@ -1374,7 +1423,7 @@ class WriterIA2TableSayAllHandler:
 				sayAll.CURSOR.TABLE,
 				startPos,
 				nextLineFunc,
-				self._updateCaret,
+				updateCaret,
 				startedFromScript=True,
 			)
 		except Exception as e:
