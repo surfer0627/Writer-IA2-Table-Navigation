@@ -27,6 +27,32 @@ class AppModule(builtinSoffice.AppModule):
 	_writerIA2TableTextInfoPatchEnabled = False
 	_writerTableBrailleCollapsedChunkPatchEnabled = True
 
+	def event_NVDAObject_init(
+		self,
+		obj,
+	) -> None:
+		"""Use table-enabled SymphonyDocument for Writer documents."""
+		super().event_NVDAObject_init(
+			obj,
+		)
+
+		try:
+			treeInterceptorClass = obj.treeInterceptorClass
+		except (AttributeError, NotImplementedError):
+			return
+
+		# Let builtin soffice decide whether this object is a Writer
+		# document. Only replace the exact SymphonyDocument selected by
+		# the builtin AppModule.
+		if treeInterceptorClass is not builtinSoffice.SymphonyDocument:
+			return
+
+		from .writerDocumentTableNavigation import (
+			WriterTableNavigationSymphonyDocument,
+		)
+
+		obj.treeInterceptorClass = WriterTableNavigationSymphonyDocument
+
 	def _syncWriterIA2TableAfterMove(self, result: dict[str, object]) -> dict[str, object]:
 		"""Synchronize NVDA focus, Symphony, speech, and braille after IA2 table movement."""
 		syncResult = {
@@ -868,7 +894,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the previous row in a Writer table.
 		description=_nvdaCoreGettext("moves to the previous table row"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+upArrow",
+		# gesture="kb:control+alt+upArrow",
 	)
 	def script_writerIA2TableMoveUp(self, gesture) -> None:
 		self._moveWriterIA2TableCell("up")
@@ -877,7 +903,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the next row in a Writer table.
 		description=_nvdaCoreGettext("moves to the next table row"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+downArrow",
+		# gesture="kb:control+alt+downArrow",
 	)
 	def script_writerIA2TableMoveDown(self, gesture) -> None:
 		self._moveWriterIA2TableCell("down")
@@ -886,7 +912,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the previous column in a Writer table.
 		description=_nvdaCoreGettext("moves to the previous table column"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+leftArrow",
+		# gesture="kb:control+alt+leftArrow",
 	)
 	def script_writerIA2TableMoveLeft(self, gesture) -> None:
 		self._moveWriterIA2TableCell("left")
@@ -895,7 +921,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the next column in a Writer table.
 		description=_nvdaCoreGettext("moves to the next table column"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+rightArrow",
+		# gesture="kb:control+alt+rightArrow",
 	)
 	def script_writerIA2TableMoveRight(self, gesture) -> None:
 		self._moveWriterIA2TableCell("right")
@@ -904,7 +930,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the first row in a Writer table.
 		description=_nvdaCoreGettext("moves to the first table row"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+pageUp",
+		# gesture="kb:control+alt+pageUp",
 	)
 	def script_writerIA2TableFirstRow(self, gesture) -> None:
 		self._moveWriterIA2TableBoundary(
@@ -916,7 +942,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the last row in a Writer table.
 		description=_nvdaCoreGettext("moves to the last table row"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+pageDown",
+		# gesture="kb:control+alt+pageDown",
 	)
 	def script_writerIA2TableLastRow(self, gesture) -> None:
 		self._moveWriterIA2TableBoundary(
@@ -928,7 +954,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the first column in a Writer table.
 		description=_nvdaCoreGettext("moves to the first table column"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+home",
+		# gesture="kb:control+alt+home",
 	)
 	def script_writerIA2TableFirstColumn(self, gesture) -> None:
 		self._moveWriterIA2TableBoundary(
@@ -940,7 +966,7 @@ class AppModule(builtinSoffice.AppModule):
 		# Translators: Input help mode message for moving to the last column in a Writer table.
 		description=_nvdaCoreGettext("moves to the last table column"),
 		category=SCRCAT_WRITER_IA2_TABLE,
-		gesture="kb:control+alt+end",
+		# gesture="kb:control+alt+end",
 	)
 	def script_writerIA2TableLastColumn(self, gesture) -> None:
 		self._moveWriterIA2TableBoundary(
