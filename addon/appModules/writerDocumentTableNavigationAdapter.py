@@ -527,12 +527,22 @@ class WriterDocumentTableNavigationAdapter:
 			childCount = 0
 
 		children = []
+		getChild = getattr(
+			obj,
+			"getChild",
+			None,
+		)
+
+		if not callable(
+			getChild,
+		):
+			return children
 
 		for index in range(
 			childCount,
 		):
 			try:
-				child = obj.getChild(
+				child = getChild(
 					index,
 				)
 			except Exception:
