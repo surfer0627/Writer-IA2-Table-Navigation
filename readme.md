@@ -88,7 +88,7 @@ Useful test documents include simple tables, empty cells, horizontal and vertica
 
 ## Building
 
-This project is based on the NVDA add-on template.
+This project is based on the [NVDA Add-on Template](https://github.com/nvaccess/AddonTemplate).
 
 After installing the required build dependencies, build the add-on from the repository root with:
 

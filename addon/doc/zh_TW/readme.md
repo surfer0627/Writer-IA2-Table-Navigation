@@ -98,7 +98,7 @@ Writer 的表格結構與文字內容來自不同的無障礙物件。
 
 ## 建置
 
-這個專案使用 NVDA Add-on Template。
+這個專案使用 [NVDA Add-on Template](https://github.com/nvaccess/AddonTemplate)。
 
 安裝需要的建置工具後，在專案根目錄執行：
 
